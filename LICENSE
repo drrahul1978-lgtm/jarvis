@@ -1,0 +1,39 @@
+Copyright (c) 2026 drrahul1978-lgtm. All rights reserved.
+
+This software is not open source. The source is published so that people can
+read it, verify what it does, and run it for themselves. It is not published
+for reuse.
+
+WHAT YOU MAY DO
+
+  - Download this software and run it on hardware you own or control.
+  - Use it for personal, non-commercial purposes.
+  - Read and study the source code.
+  - Change configuration values and the persona text in core/persona.py for
+    your own private use on your own machine.
+
+WHAT YOU MAY NOT DO WITHOUT WRITTEN PERMISSION
+
+  - Publish, distribute, or share this software or any part of it, whether
+    modified or unmodified.
+  - Create and release derivative works, forks, or ports.
+  - Incorporate this code into another project, product, or service.
+  - Use it commercially, or offer it to others as a service.
+  - Remove or alter this notice.
+
+THIRD-PARTY COMPONENTS
+
+This software does not include any language model. It runs models published by
+their own authors and distributed through Ollama. Those models carry their own
+licences, which are entirely separate from this one and are not affected by it.
+
+NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For permission beyond these terms, contact the copyright holder.
