@@ -1,0 +1,20 @@
+# Jarvis's memory: stored facts about you and every conversation transcript.
+# This is the one thing in the project that must never be published.
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated during a model build; rebuilt by deploy/build_model.py.
+deploy/Modelfile
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

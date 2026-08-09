@@ -1,0 +1,35 @@
+[Unit]
+Description=Jarvis local AI assistant
+Documentation=file://__JARVIS_DIR__/README.md
+After=network-online.target ollama.service
+Wants=network-online.target
+Requires=ollama.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__JARVIS_DIR__
+ExecStart=/usr/bin/python3 __JARVIS_DIR__/serve.py
+Environment=JARVIS_MODEL=__MODEL__
+Environment=PYTHONUNBUFFERED=1
+
+# Reachable from the LAN. Drop to 127.0.0.1 for localhost only, and set
+# JARVIS_TOKEN to a long random string if this network is not fully trusted.
+Environment=JARVIS_BIND=0.0.0.0
+Environment=JARVIS_PORT=8765
+#Environment=JARVIS_TOKEN=change-me
+
+# Ollama can be slow to load a model on a Pi; give it room before restarting.
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=300
+
+# Modest hardening: Jarvis only needs its own directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=__JARVIS_DIR__
+
+[Install]
+WantedBy=multi-user.target
