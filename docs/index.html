@@ -356,6 +356,29 @@ python jarvis.py</code></pre>
     Enter on an empty line to talk; recording stops by itself when you do.
   </p>
 
+  <h3>Hands-free</h3>
+
+  <p>
+    With a microphone attached, Jarvis offers hands-free listening at startup, or
+    you can ask for it directly:
+  </p>
+
+  <pre class="cmd"><code>python jarvis.py --wake</code></pre>
+
+  <p>
+    It then waits quietly until it hears its name, chirps to show it is paying
+    attention, and listens for your question. Say the question in the same breath —
+    "Jarvis, what time is it" — and it answers straight away instead of making you
+    repeat yourself. <code>/wake off</code> turns it back off mid-session, and
+    Ctrl-C leaves it, since while hands-free is on the microphone has the floor.
+  </p>
+
+  <p>
+    Matching is forgiving on purpose, because speech recognition mangles a one-word
+    name constantly. It is not forgiving enough to trigger on ordinary speech: a
+    false wake is more irritating than a missed one.
+  </p>
+
   <h3>A better voice</h3>
 
   <p>

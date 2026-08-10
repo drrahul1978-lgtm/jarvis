@@ -28,6 +28,7 @@ HELP = """
   /forget <id>       drop fact number <id>
   /reset             clear the current conversation (memories survive)
   /voice             show or change the speaking voice (voice mode only)
+  /wake [on|off|word]  hands-free listening (voice mode only)
   /status            hardware, model, and connection
   /verbose           toggle showing reasoning and tool calls
   /exit              quit  (Ctrl-C and Ctrl-D also work)
@@ -128,6 +129,8 @@ class Jarvis:
                 self.ui.status("Usage: /forget <id>  (see /memory)", "warn")
         elif head == "/voice":
             self.voice_command(rest)
+        elif head == "/wake":
+            self.wake_command(rest)
         elif head == "/status":
             online = self.brain.is_up()
             self.ui.say(
@@ -193,6 +196,51 @@ class Jarvis:
             "Get more with: python deploy/get_voice.py --list",
             "warn",
         )
+
+    def wake_command(self, rest: str) -> None:
+        """Turn hands-free listening on or off, or change the word it waits for."""
+        if not hasattr(self.ui, "wake"):
+            self.ui.status("Not in voice mode. Restart and answer yes, or use --voice.")
+            return
+        if not getattr(self.ui, "listener", None):
+            self.ui.status(
+                "No microphone, so there is nothing to wake. Install it with: "
+                "pip install -r requirements-voice.txt",
+                "warn",
+            )
+            return
+
+        word = rest.strip().lower()
+
+        if not word:
+            if self.ui.wake:
+                self.ui.say(
+                    f'Hands-free is on, waiting for "{self.ui.wake}".\n'
+                    "  /wake off            back to press-Enter-to-talk\n"
+                    "  /wake <word>         wait for a different word"
+                )
+            else:
+                self.ui.say(
+                    "Hands-free is off; press Enter to talk.\n"
+                    f"  /wake on             wait for \"{config.NAME.lower()}\"\n"
+                    "  /wake <word>         wait for a different word"
+                )
+            return
+
+        if word in ("off", "no", "stop", "disable"):
+            self.ui.wake = ""
+            self.ui.status("Hands-free off. Press Enter to talk.")
+            return
+
+        if word in ("on", "yes", "enable"):
+            word = config.NAME.lower()
+
+        if len(word.split()) > 1:
+            self.ui.status("Pick a single word — shorter is easier to hear.", "warn")
+            return
+
+        self.ui.wake = word
+        self.ui.status(f'Hands-free on. Say "{word}" to get my attention.')
 
     def _retune(self, model=None, speed=None, volume=None) -> bool:
         """Rebuild the speaker with new settings, keeping the current voice."""
@@ -308,6 +356,11 @@ def main() -> int:
         "--no-voice", action="store_true",
         help="Stay in text mode without being asked.",
     )
+    parser.add_argument(
+        "--wake", nargs="?", const=config.NAME.lower(), default="",
+        metavar="WORD",
+        help=f"Hands-free: wait for a wake word (default '{config.NAME.lower()}').",
+    )
     parser.add_argument("--tts-voice", default="", help="Name of the system voice to use.")
     args = parser.parse_args()
 
@@ -339,15 +392,22 @@ def main() -> int:
 
     # Voice is offered rather than assumed: asked once at startup, unless a
     # flag already settles it or there is nobody at the keyboard to answer.
-    want_voice = args.voice
-    if not args.voice and not args.no_voice and not args.once and sys.stdin.isatty():
+    want_voice = args.voice or bool(args.wake)
+    if not want_voice and not args.no_voice and not args.once and sys.stdin.isatty():
         want_voice = ask_yes_no(console, "Use voice? Jarvis will speak its answers")
+
+    wake = args.wake
+    if want_voice and not wake and not args.no_mic and sys.stdin.isatty():
+        if ask_yes_no(console, f'Hands-free? Say "{config.NAME}" to get its attention'):
+            wake = config.NAME.lower()
 
     if want_voice:
         from interface.voice import VoiceInterface
 
         console.status("Starting voice (first run loads a speech model)...")
-        voice = VoiceInterface(console, listen=not args.no_mic, voice=args.tts_voice)
+        voice = VoiceInterface(
+            console, listen=not args.no_mic, voice=args.tts_voice, wake=wake
+        )
         ui = voice
         ui.status(voice.describe())
         if voice.listen_error:

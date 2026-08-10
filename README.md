@@ -191,7 +191,46 @@ the questions. It says so at startup rather than failing.
 | `--voice` | speak answers, listen for questions |
 | `--voice --no-mic` | speak answers, keep typing questions |
 | `--no-voice` | stay in text mode without being asked |
+| `--wake` | hands-free; wait for the wake word |
+| `--wake computer` | hands-free with a different word |
 | `--tts-voice "Microsoft Zira Desktop"` | pick a specific system voice |
+
+### Hands-free
+
+With a microphone, Jarvis offers this at startup as a second question, or you
+can pass `--wake`. It then sits quietly until it hears its name:
+
+```
+you: "Jarvis"
+     *chirp*
+you: "what's the weather"
+```
+
+Say it with the question attached and it skips the second step — "Jarvis, what
+time is it" is answered immediately rather than making you repeat yourself.
+
+Toggle it mid-session:
+
+| Command | Effect |
+| --- | --- |
+| `/wake` | is it on, and what is it listening for |
+| `/wake on` / `/wake off` | switch hands-free listening |
+| `/wake computer` | wait for a different word |
+
+While hands-free is on the microphone has the floor, so **Ctrl-C is the way
+out** — there is no keyboard prompt competing with it.
+
+This does not use a dedicated wake-word engine. It listens for sound, then
+transcribes the short clip and checks whether it starts with the name. That
+avoids another dependency and an account signup, at the cost of some CPU each
+time you make a noise near the microphone — worth watching on a Pi 4. It stays
+idle and nearly free while the room is quiet.
+
+Matching is deliberately forgiving, because speech recognition mangles a
+one-word name constantly: *javis*, *jervis*, *charvis* and *jarvace* all wake
+it. It is not so forgiving that *harvest* does — a false wake is more annoying
+than a missed one. If it triggers on background noise, raise
+`JARVIS_MIC_THRESHOLD`.
 
 At the prompt, press Enter on an empty line to talk; recording stops on its own
 about a second after you do. Type instead at any time — both work in the same

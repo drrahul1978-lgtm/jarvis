@@ -304,6 +304,87 @@ class WhisperListener:
         )
         return " ".join(s.text.strip() for s in segments).strip()
 
+    def wait_for_sound(self, poll: float = 0.05) -> None:
+        """Block until someone starts talking.
+
+        Transcribing continuously would peg a CPU core for nothing — on a Pi it
+        would cook the board. Instead this watches the microphone's energy
+        level, which is nearly free, and only wakes the recogniser when there
+        is actually something to hear.
+        """
+        np, sd = self.np, self.sd
+        block = int(self.rate * poll)
+        threshold = float(os.environ.get("JARVIS_MIC_THRESHOLD", "0.012"))
+
+        with sd.InputStream(samplerate=self.rate, channels=1, dtype="float32",
+                            blocksize=block, device=self.device) as stream:
+            while True:
+                chunk, _overflow = stream.read(block)
+                if float(np.sqrt(np.mean(chunk ** 2))) > threshold:
+                    return
+
+    def chirp(self, rising: bool = True) -> None:
+        """A short tone, so you know it heard you without it saying anything."""
+        np, sd = self.np, self.sd
+        rate = 22050
+        tones = (660, 990) if rising else (990, 660)
+        parts = []
+        for freq in tones:
+            t = np.linspace(0, 0.07, int(rate * 0.07), endpoint=False)
+            wave = 0.18 * np.sin(2 * np.pi * freq * t)
+            wave *= np.minimum(1.0, np.linspace(0, 12, wave.size))       # fade in
+            wave *= np.minimum(1.0, np.linspace(12, 0, wave.size))       # fade out
+            parts.append(wave.astype(np.float32))
+        try:
+            sd.play(np.concatenate(parts), rate)
+            sd.wait()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# Whisper mishears a one-word name constantly, especially at the start of a
+# clip. These are real transcriptions observed for "Jarvis", plus the polite
+# prefixes people put in front of it.
+_WAKE_PREFIXES = ("hey", "ok", "okay", "hi", "yo", "hello")
+_WORD = re.compile(r"[a-z']+")
+
+
+def detect_wake(text: str, word: str = "jarvis", threshold: float = 0.72):
+    """Did they say the wake word, and what did they say after it?
+
+    Returns (heard, remainder). The remainder matters: "Jarvis, what time is it"
+    should ask the question straight away rather than making them say it twice.
+    """
+    import difflib
+
+    tokens = _WORD.findall(text.lower())
+    if not tokens:
+        return False, ""
+
+    target = word.lower()
+    for i, token in enumerate(tokens):
+        if token in _WAKE_PREFIXES:
+            continue
+        # Two ways to match, because one is not enough on its own.
+        #
+        # Similarity catches javis, jervis and charvis. It cannot be loosened
+        # far enough to catch "jarvace" without also catching "harvest", which
+        # scores identically — and a false wake is worse than a missed one.
+        # So a shared opening also counts: words starting "jarv" are the name,
+        # while "harvest" is not.
+        opening = target[:4]
+        if (
+            difflib.SequenceMatcher(None, token, target).ratio() >= threshold
+            or (len(opening) >= 4 and token.startswith(opening))
+        ):
+            remainder = " ".join(tokens[i + 1:]).strip()
+            return True, remainder
+        # Only the first couple of words can be the wake word; beyond that it
+        # is speech that merely happens to mention the name.
+        if i >= 2:
+            break
+    return False, ""
+
 
 def _is_small_machine() -> bool:
     from core import hardware
@@ -318,12 +399,13 @@ class VoiceInterface:
     """Speaks answers aloud; listens if it can, reads typed input if it cannot."""
 
     def __init__(self, ui, speak_status: bool = False, listen: bool = True,
-                 voice: str = "", rate: int = 1):
+                 voice: str = "", rate: int = 1, wake: str = ""):
         self.ui = ui                      # console, for the visible transcript
         self.speaker = pick_speaker(voice=voice, rate=rate)
         self.speak_status = speak_status
         self.listener = None
         self.listen_error = ""
+        self.wake = wake.strip().lower()
 
         if listen:
             try:
@@ -353,6 +435,8 @@ class VoiceInterface:
     def listen(self) -> str:
         if not self.listener:
             return self.ui.listen()
+        if self.wake:
+            return self.listen_for_wake()
 
         self.ui.status("Press Enter to speak, or type instead.")
         typed = self.ui.listen()
@@ -373,6 +457,56 @@ class VoiceInterface:
 
         self.ui.say_user(text)
         return text
+
+    def listen_for_wake(self) -> str:
+        """Hands-free: sit quietly until the wake word, then take the question.
+
+        Ctrl-C leaves the loop, which is the only way out — there is no keyboard
+        prompt to fall back to while the microphone has the floor.
+        """
+        self.ui.status(f'Waiting for "{self.wake}". Ctrl-C to stop.')
+
+        while True:
+            try:
+                self.listener.wait_for_sound()
+                audio = self.listener.record(max_seconds=8.0, silence_seconds=0.9)
+                heard = self.listener.transcribe(audio)
+            except KeyboardInterrupt:
+                return ""
+            except Exception as exc:  # noqa: BLE001
+                self.ui.status(f"Microphone failed: {exc}", "warn")
+                return ""
+
+            if not heard:
+                continue
+
+            woken, remainder = detect_wake(heard, self.wake)
+            if not woken:
+                continue
+
+            # "Jarvis, what time is it" - the question came with the wake word,
+            # so answer it rather than asking them to say it again.
+            if remainder:
+                self.listener.chirp()
+                self.ui.say_user(remainder)
+                return remainder
+
+            # Just the name. Acknowledge, then listen for the actual question.
+            self.listener.chirp()
+            try:
+                audio = self.listener.record()
+                question = self.listener.transcribe(audio)
+            except Exception as exc:  # noqa: BLE001
+                self.ui.status(f"Microphone failed: {exc}", "warn")
+                continue
+
+            if not question:
+                self.listener.chirp(rising=False)
+                self.ui.status("Didn't catch that.", "warn")
+                continue
+
+            self.ui.say_user(question)
+            return question
 
     def stream(self, fragment: str) -> None:
         """Show every token, but speak only whole sentences."""
@@ -421,11 +555,12 @@ class VoiceInterface:
 
     # -- extras ------------------------------------------------------------
     def describe(self) -> str:
-        listening = (
-            f"microphone via {self.listener.name} ({self.listener.size})"
-            if self.listener
-            else "typed input"
-        )
+        if not self.listener:
+            listening = "typed input"
+        elif self.wake:
+            listening = f'hands-free, wake word "{self.wake}" ({self.listener.size})'
+        else:
+            listening = f"microphone via {self.listener.name} ({self.listener.size})"
         return f"voice: {self.speaker.name} out, {listening} in"
 
     def close(self) -> None:
