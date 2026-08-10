@@ -185,6 +185,24 @@
     border-radius: 2px;
   }
 
+  dl.downloads {
+    margin: 0 0 1.2em;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+  }
+  dl.downloads dt {
+    padding: 0.7em 0.9em 0.1em;
+    font-weight: 700;
+  }
+  dl.downloads dt a { font-size: 1.05em; }
+  dl.downloads dd {
+    margin: 0;
+    padding: 0 0.9em 0.75em;
+    color: var(--muted);
+    font-size: 0.92em;
+  }
+  dl.downloads dd + dt { border-top: 1px solid var(--rule); }
+
   .picked {
     background: var(--code-bg);
     border-left: 3px solid var(--rule);
@@ -254,24 +272,35 @@
   <h2>Install it</h2>
 
   <p>
-    You need two things, both free:
-    <a href="https://ollama.com/download">Ollama</a>, which runs the model, and
-    <a href="https://www.python.org/downloads/">Python</a> 3.10 or newer. Expect to
-    download a few gigabytes once; after that nothing further is needed.
+    You need two things first. Both are free, and both are downloaded from their own
+    official sites, not from here:
   </p>
 
+  <dl class="downloads">
+    <dt><a href="https://ollama.com/download">Download Ollama &rarr;</a></dt>
+    <dd>
+      ollama.com/download — runs the model on your machine. Required on every
+      platform.
+    </dd>
+
+    <dt><a href="https://www.python.org/downloads/">Download Python &rarr;</a></dt>
+    <dd>
+      python.org/downloads — version 3.10 or newer. Already installed on Raspberry
+      Pi OS and macOS, so check with <code>python3 --version</code> before you
+      download it.
+    </dd>
+  </dl>
+
   <p>
-    On a Raspberry Pi, Python is already installed — check with
-    <code>python3 --version</code> before downloading anything. On macOS it is also
-    usually present. On Windows you will most likely need to install it, and you must
-    tick <em>Add python.exe to PATH</em> in the installer or the commands below will
-    not be found.
+    <strong>On Windows, tick <em>Add python.exe to PATH</em></strong> in the Python
+    installer. If you miss it, every command below fails with "python is not
+    recognized" and there is no obvious clue why.
   </p>
 
   <h3>1. Install Ollama</h3>
   <p>
-    Download it from <a href="https://ollama.com/download">ollama.com/download</a>, or
-    from a terminal.
+    Use the <a href="https://ollama.com/download">download page</a> above, or install
+    it from a terminal.
   </p>
   <p>On Windows:</p>
   <pre class="cmd"><code>winget install Ollama.Ollama</code></pre>
