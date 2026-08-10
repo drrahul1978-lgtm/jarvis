@@ -1,0 +1,19 @@
+# Optional — only needed for microphone input (`python jarvis.py --voice`).
+#
+# Speaking answers aloud needs none of this: Windows, macOS and most Linux
+# desktops already have a speech engine. Listening does, because capturing a
+# microphone and running speech recognition cannot be done from the standard
+# library.
+#
+#   pip install -r requirements-voice.txt
+#
+# On a Raspberry Pi you also need PortAudio, which sounddevice binds to:
+#   sudo apt install portaudio19-dev
+#
+# The first run downloads a Whisper model (~75 MB for tiny.en). Override the
+# size with JARVIS_WHISPER_MODEL; tiny.en is chosen automatically on small
+# machines, base.en on larger ones.
+
+sounddevice>=0.4.6
+numpy>=1.24
+faster-whisper>=1.0.0

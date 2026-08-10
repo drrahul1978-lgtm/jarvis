@@ -195,9 +195,23 @@ def main() -> int:
     parser.add_argument(
         "--verbose", action="store_true", help="Show reasoning and tool calls."
     )
+    parser.add_argument(
+        "--voice", action="store_true", help="Speak answers aloud and listen for input."
+    )
+    parser.add_argument(
+        "--no-mic", action="store_true",
+        help="With --voice: speak answers, but keep typing the questions.",
+    )
+    parser.add_argument("--tts-voice", default="", help="Name of the system voice to use.")
     args = parser.parse_args()
 
     ui = ConsoleInterface()
+    voice = None
+    if args.voice:
+        from interface.voice import VoiceInterface
+
+        voice = VoiceInterface(ui, listen=not args.no_mic, voice=args.tts_voice)
+        ui = voice
     brain = Brain(model=args.model, host=args.host)
 
     # An explicit choice always wins; otherwise prefer Jarvis's own build over
@@ -221,6 +235,15 @@ def main() -> int:
         memory.close()
         return 1
 
+    if voice:
+        ui.status(voice.describe())
+        if voice.listen_error:
+            ui.status(
+                "Microphone unavailable, so questions stay typed. "
+                "Install it with:  pip install -r requirements-voice.txt",
+                "warn",
+            )
+
     agent = Jarvis(ui, brain, memory, verbose=args.verbose)
     try:
         if args.once:
@@ -231,6 +254,8 @@ def main() -> int:
         ui.say("Standing by.")
     finally:
         memory.close()
+        if voice:
+            voice.close()  # let the last sentence finish before the process exits
     return 0
 
 

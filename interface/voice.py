@@ -1,0 +1,339 @@
+"""Voice front-end: speak the answers, and optionally listen for the questions.
+
+This implements the same five methods as the console front-end (see base.py),
+so nothing in core/ knows or cares which one is attached.
+
+Two halves, deliberately independent:
+
+* Speaking works with no installation at all. Windows has SAPI built in, macOS
+  has `say`, and a Pi almost always has espeak-ng a package away. If a better
+  engine (Piper) is present it is used instead.
+* Listening needs real packages — you cannot capture a microphone or run
+  speech recognition from the standard library. If they are missing, Jarvis
+  says so once and falls back to typed input rather than refusing to start.
+
+The important detail is that speech is buffered into sentences rather than
+spoken word by word. Jarvis begins talking as soon as the first sentence is
+complete, instead of waiting for the whole answer, which is the difference
+between feeling responsive and feeling broken.
+"""
+
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import threading
+
+from core import config
+
+# Sentence boundary: punctuation followed by whitespace, or end of buffer.
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n{2,}")
+
+# Things that are punctuation on screen but noise out loud.
+_MARKDOWN = re.compile(r"(\*\*|\*|`{1,3}|_{1,2}|^#{1,6}\s*|^\s*[-*]\s+)", re.MULTILINE)
+_URL = re.compile(r"https?://\S+")
+
+
+def speakable(text: str) -> str:
+    """Strip the markup a screen renders and a speaker should not read aloud."""
+    text = _URL.sub("a link", text)
+    text = _MARKDOWN.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+# ---------------------------------------------------------------- speaking --
+
+
+class Speaker:
+    name = "none"
+
+    def speak(self, text: str) -> None: ...
+    def close(self) -> None: ...
+
+
+class WindowsSpeaker(Speaker):
+    """Windows SAPI, driven through one long-lived PowerShell process.
+
+    Spawning PowerShell per sentence costs about a quarter second, which is
+    audible as a stutter between sentences. Keeping one process alive and
+    feeding it lines on stdin removes that.
+    """
+
+    name = "Windows SAPI"
+
+    SCRIPT = (
+        "Add-Type -AssemblyName System.Speech;"
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+        "$s.Rate = {rate};"
+        "try {{ $s.SelectVoice('{voice}') }} catch {{}};"
+        "while (($l = [Console]::In.ReadLine()) -ne $null) "
+        "{{ if ($l.Trim()) {{ $s.Speak($l) }} }}"
+    )
+
+    def __init__(self, voice: str = "", rate: int = 1):
+        script = self.SCRIPT.format(rate=rate, voice=voice.replace("'", "''"))
+        self.proc = subprocess.Popen(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+        )
+
+    def speak(self, text: str) -> None:
+        if self.proc.poll() is not None:
+            return
+        try:
+            self.proc.stdin.write(text.replace("\n", " ") + "\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, ValueError):
+            pass
+
+    def close(self) -> None:
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(timeout=5)
+        except Exception:  # noqa: BLE001
+            self.proc.kill()
+
+
+class CommandSpeaker(Speaker):
+    """Any TTS binary that takes text on stdin or as an argument."""
+
+    def __init__(self, name: str, argv: list[str], stdin: bool = True):
+        self.name = name
+        self.argv = argv
+        self.stdin = stdin
+
+    def speak(self, text: str) -> None:
+        try:
+            if self.stdin:
+                subprocess.run(self.argv, input=text, text=True, check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.run(self.argv + [text], check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def pick_speaker(voice: str = "", rate: int = 1) -> Speaker:
+    """Best available text-to-speech on this machine."""
+    # Piper is the best sounding and runs well on a Pi, so prefer it if present.
+    if shutil.which("piper") and os.environ.get("JARVIS_PIPER_MODEL"):
+        return CommandSpeaker(
+            "Piper",
+            ["piper", "--model", os.environ["JARVIS_PIPER_MODEL"], "--output-raw"],
+        )
+    if os.name == "nt":
+        try:
+            return WindowsSpeaker(voice=voice, rate=rate)
+        except Exception:  # noqa: BLE001
+            pass
+    if sys.platform == "darwin" and shutil.which("say"):
+        return CommandSpeaker("macOS say", ["say"], stdin=False)
+    if shutil.which("espeak-ng"):
+        return CommandSpeaker("espeak-ng", ["espeak-ng", "-s", "160"])
+    if shutil.which("espeak"):
+        return CommandSpeaker("espeak", ["espeak", "-s", "160"])
+    return Speaker()
+
+
+# --------------------------------------------------------------- listening --
+
+
+class ListenerUnavailable(Exception):
+    """Microphone or speech recognition is not installed."""
+
+
+class WhisperListener:
+    """Record from the microphone until you stop talking, then transcribe."""
+
+    name = "faster-whisper"
+
+    def __init__(self, model_size: str = "", device_index=None):
+        try:
+            import numpy  # noqa: F401
+            import sounddevice  # noqa: F401
+            from faster_whisper import WhisperModel
+        except ImportError as exc:
+            raise ListenerUnavailable(str(exc)) from exc
+
+        import sounddevice as sd
+
+        self.sd = sd
+        self.np = __import__("numpy")
+        self.device = device_index
+        self.rate = 16000
+
+        # tiny.en is the only sensible default on a Pi; a desktop can afford more.
+        size = model_size or os.environ.get(
+            "JARVIS_WHISPER_MODEL",
+            "tiny.en" if _is_small_machine() else "base.en",
+        )
+        self.model = WhisperModel(size, device="cpu", compute_type="int8")
+        self.size = size
+
+    def record(self, max_seconds: float = 20.0, silence_seconds: float = 1.2) -> "any":
+        """Capture until the speaker has been quiet for `silence_seconds`."""
+        np, sd = self.np, self.sd
+        block = int(self.rate * 0.1)
+        frames, quiet, started = [], 0.0, False
+        threshold = float(os.environ.get("JARVIS_MIC_THRESHOLD", "0.012"))
+
+        with sd.InputStream(samplerate=self.rate, channels=1, dtype="float32",
+                            blocksize=block, device=self.device) as stream:
+            for _ in range(int(max_seconds / 0.1)):
+                chunk, _overflow = stream.read(block)
+                frames.append(chunk.copy())
+                level = float(np.sqrt(np.mean(chunk ** 2)))
+
+                if level > threshold:
+                    started, quiet = True, 0.0
+                elif started:
+                    quiet += 0.1
+                    if quiet >= silence_seconds:
+                        break
+
+        return np.concatenate(frames, axis=0).flatten() if frames else None
+
+    def transcribe(self, audio) -> str:
+        if audio is None or len(audio) == 0:
+            return ""
+        segments, _info = self.model.transcribe(
+            audio, language="en", vad_filter=True, beam_size=1
+        )
+        return " ".join(s.text.strip() for s in segments).strip()
+
+
+def _is_small_machine() -> bool:
+    from core import hardware
+
+    return hardware.is_raspberry_pi() or hardware.total_ram_gb() < 6
+
+
+# ------------------------------------------------------------- the front-end --
+
+
+class VoiceInterface:
+    """Speaks answers aloud; listens if it can, reads typed input if it cannot."""
+
+    def __init__(self, ui, speak_status: bool = False, listen: bool = True,
+                 voice: str = "", rate: int = 1):
+        self.ui = ui                      # console, for the visible transcript
+        self.speaker = pick_speaker(voice=voice, rate=rate)
+        self.speak_status = speak_status
+        self.listener = None
+        self.listen_error = ""
+
+        if listen:
+            try:
+                self.listener = WhisperListener()
+            except ListenerUnavailable as exc:
+                self.listen_error = str(exc)
+
+        self._buffer = ""
+        self._queue: queue.Queue = queue.Queue()
+        self._worker = threading.Thread(target=self._drain, daemon=True)
+        self._worker.start()
+
+    # -- speech queue: keeps sentences in order without blocking the model --
+    def _drain(self) -> None:
+        while True:
+            text = self._queue.get()
+            if text is None:
+                return
+            self.speaker.speak(text)
+
+    def _enqueue(self, text: str) -> None:
+        text = speakable(text)
+        if text:
+            self._queue.put(text)
+
+    # -- Interface ---------------------------------------------------------
+    def listen(self) -> str:
+        if not self.listener:
+            return self.ui.listen()
+
+        self.ui.status("Press Enter to speak, or type instead.")
+        typed = self.ui.listen()
+        if typed:
+            return typed
+
+        self.ui.status("Listening...")
+        try:
+            audio = self.listener.record()
+            text = self.listener.transcribe(audio)
+        except Exception as exc:  # noqa: BLE001
+            self.ui.status(f"Microphone failed: {exc}", "warn")
+            return self.ui.listen()
+
+        if not text:
+            self.ui.status("Didn't catch that.", "warn")
+            return self.listen()
+
+        self.ui.say_user(text)
+        return text
+
+    def stream(self, fragment: str) -> None:
+        """Show every token, but speak only whole sentences."""
+        self.ui.stream(fragment)
+        self._buffer += fragment
+
+        while True:
+            match = _SENTENCE_END.search(self._buffer)
+            if not match:
+                break
+            sentence, self._buffer = (
+                self._buffer[: match.start()],
+                self._buffer[match.end():],
+            )
+            self._enqueue(sentence)
+
+    def end_stream(self) -> None:
+        if self._buffer.strip():
+            self._enqueue(self._buffer)
+            self._buffer = ""
+        self.ui.end_stream()
+
+    def say(self, text: str) -> None:
+        self.ui.say(text)
+        self._enqueue(text)
+
+    def status(self, text: str, level: str = "info") -> None:
+        self.ui.status(text, level)
+        if self.speak_status and level in ("warn", "error"):
+            self._enqueue(text)
+
+    def __getattr__(self, name: str):
+        """Forward anything this layer does not override to the console beneath.
+
+        The voice front-end decorates the console rather than replacing it, so
+        console-only extras (banner, say_user) must still reach it. Without
+        this, adding a method to ConsoleInterface silently breaks voice mode.
+        """
+        if name.startswith("_"):
+            raise AttributeError(name)
+        try:
+            ui = self.__dict__["ui"]
+        except KeyError:  # accessed before __init__ finished
+            raise AttributeError(name) from None
+        return getattr(ui, name)
+
+    # -- extras ------------------------------------------------------------
+    def describe(self) -> str:
+        listening = (
+            f"microphone via {self.listener.name} ({self.listener.size})"
+            if self.listener
+            else "typed input"
+        )
+        return f"voice: {self.speaker.name} out, {listening} in"
+
+    def close(self) -> None:
+        self._queue.put(None)
+        self._worker.join(timeout=10)
+        self.speaker.close()

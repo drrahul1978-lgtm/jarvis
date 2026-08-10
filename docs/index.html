@@ -331,6 +331,31 @@ python jarvis.py</code></pre>
   </p>
   <pre class="cmd"><code>./deploy/install_pi.sh</code></pre>
 
+  <h2>Talking to it out loud</h2>
+
+  <pre class="cmd"><code>python jarvis.py --voice</code></pre>
+
+  <p>
+    Jarvis reads its answers aloud, starting as soon as the first sentence is
+    finished rather than waiting for the whole reply. Nothing needs installing for
+    this — Windows, macOS and most Linux desktops already have a speech engine, and
+    on a Raspberry Pi it is one package away
+    (<code>sudo apt install espeak-ng</code>).
+  </p>
+
+  <p>
+    Talking <em>to</em> it does need extra packages, because capturing a microphone
+    and transcribing speech cannot be done with Python alone:
+  </p>
+
+  <pre class="cmd"><code>pip install -r requirements-voice.txt</code></pre>
+
+  <p>
+    Without them <code>--voice</code> still works — it speaks the answers and you
+    type the questions, and it tells you so at startup rather than failing. Press
+    Enter on an empty line to talk; recording stops by itself when you do.
+  </p>
+
   <h2>What it can and cannot do</h2>
 
   <table>

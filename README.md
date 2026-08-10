@@ -106,6 +106,48 @@ With an RTX-class GPU the 8B model runs comfortably at conversational speed.
 
 ---
 
+## Voice
+
+```bash
+python jarvis.py --voice
+```
+
+Jarvis speaks its answers aloud. It begins talking as soon as the first sentence
+is finished rather than waiting for the whole reply, so it feels like a
+conversation instead of a progress bar. Markdown, and URLs are stripped before
+speaking — nothing reads asterisks out loud.
+
+**Speaking needs no installation.** Windows uses SAPI, macOS uses `say`, Linux
+and Raspberry Pi OS use espeak-ng (`sudo apt install espeak-ng`). If
+[Piper](https://github.com/rhasspy/piper) is installed it is preferred, since it
+sounds far better and still runs on a Pi — point `JARVIS_PIPER_MODEL` at a voice
+file.
+
+**Listening does need installation**, because capturing a microphone and running
+speech recognition cannot be done from the standard library:
+
+```bash
+pip install -r requirements-voice.txt
+```
+
+On a Raspberry Pi, also `sudo apt install portaudio19-dev`. The first run
+downloads a Whisper model — `tiny.en` (~75 MB) on small machines, `base.en` on
+larger ones. Override with `JARVIS_WHISPER_MODEL`.
+
+Without those packages `--voice` still works: it speaks the answers and you type
+the questions. It says so at startup rather than failing.
+
+| Flag | Effect |
+| --- | --- |
+| `--voice` | speak answers, listen for questions |
+| `--voice --no-mic` | speak answers, keep typing questions |
+| `--tts-voice "Microsoft Zira Desktop"` | pick a specific system voice |
+
+At the prompt, press Enter on an empty line to talk; recording stops on its own
+about a second after you do. Type instead at any time — both work in the same
+session. If it keeps mishearing silence as speech, raise `JARVIS_MIC_THRESHOLD`
+from its default of `0.012`.
+
 ## Making it its own model
 
 By default Jarvis is a personality wrapped around a stock model. One command

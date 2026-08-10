@@ -83,6 +83,11 @@ class ConsoleInterface:
         self.end_stream()
         print(self._c(f"\n{config.NAME.lower()} > ", "bold", "cyan") + text)
 
+    def say_user(self, text: str) -> None:
+        """Echo something the user said out loud, so the transcript still reads."""
+        self.end_stream()
+        print(self._c("you > ", "bold", "green") + text)
+
     def status(self, text: str, level: str = "info") -> None:
         was_streaming = self._mid_stream
         self.end_stream()
