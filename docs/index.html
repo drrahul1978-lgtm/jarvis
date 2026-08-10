@@ -356,6 +356,29 @@ python jarvis.py</code></pre>
     Enter on an empty line to talk; recording stops by itself when you do.
   </p>
 
+  <h3>A better voice</h3>
+
+  <p>
+    The voices built into Windows and Raspberry Pi OS are flat, and on Windows they
+    are American. One command fetches a considerably better British one:
+  </p>
+
+  <pre class="cmd"><code>python deploy/get_voice.py</code></pre>
+
+  <p>
+    You can hear every available voice before choosing at
+    <a href="https://rhasspy.github.io/piper-samples/">rhasspy.github.io/piper-samples</a>,
+    then pass any name to <code>--voice</code>. Inside Jarvis, <code>/voice</code>
+    switches between the ones you have downloaded and adjusts speed and volume
+    without restarting.
+  </p>
+
+  <p>
+    These are synthetic voices in a British register. None of them imitates any
+    particular performer, and cloning a real person's voice is not something this
+    project does.
+  </p>
+
   <h2>What it can and cannot do</h2>
 
   <table>

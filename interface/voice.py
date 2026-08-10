@@ -18,6 +18,7 @@ complete, instead of waiting for the whole answer, which is the difference
 between feeling responsive and feeling broken.
 """
 
+import json
 import os
 import queue
 import re
@@ -25,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from pathlib import Path
 
 from core import config
 
@@ -101,6 +103,53 @@ class WindowsSpeaker(Speaker):
             self.proc.kill()
 
 
+class PiperSpeaker(Speaker):
+    """A neural voice. Better than anything the operating system ships with.
+
+    Synthesised to an array and played through sounddevice rather than shelled
+    out to an audio player, so it behaves the same on Windows and on a Pi.
+    """
+
+    name = "Piper"
+
+    def __init__(self, model_path, speed: float = 1.0, volume: float = 1.0,
+                 expressiveness: float | None = None):
+        from piper import PiperVoice, SynthesisConfig
+        import numpy as np
+        import sounddevice as sd
+
+        self.np = np
+        self.sd = sd
+        self.voice = PiperVoice.load(str(model_path))
+        self.model_name = Path(model_path).stem
+
+        # length_scale stretches each phoneme, so it is the inverse of speed:
+        # 1.15 is a little slower and reads as more deliberate.
+        self.config = SynthesisConfig(
+            length_scale=(1.0 / speed) if speed else 1.0,
+            volume=volume,
+            noise_scale=expressiveness,
+        )
+        self.name = f"Piper ({self.model_name})"
+
+    def speak(self, text: str) -> None:
+        try:
+            chunks = list(self.voice.synthesize(text, syn_config=self.config))
+            if not chunks:
+                return
+            audio = self.np.concatenate([c.audio_int16_array for c in chunks])
+            self.sd.play(audio, chunks[0].sample_rate)
+            self.sd.wait()
+        except Exception:  # noqa: BLE001 - a failed sentence must not end the turn
+            pass
+
+    def close(self) -> None:
+        try:
+            self.sd.stop()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 class CommandSpeaker(Speaker):
     """Any TTS binary that takes text on stdin or as an argument."""
 
@@ -121,14 +170,60 @@ class CommandSpeaker(Speaker):
             pass
 
 
+VOICES_DIR = config.DATA_DIR / "voices"
+
+
+def chosen_piper_voice() -> Path | None:
+    """The Piper voice to use, if one has been downloaded.
+
+    Preference order: an explicit environment variable, then whatever
+    deploy/get_voice.py last selected, then any single voice sitting in the
+    voices folder.
+    """
+    explicit = os.environ.get("JARVIS_VOICE", "").strip()
+    if explicit:
+        candidate = Path(explicit)
+        if candidate.is_file():
+            return candidate
+        candidate = VOICES_DIR / f"{explicit}.onnx"
+        if candidate.is_file():
+            return candidate
+
+    marker = config.DATA_DIR / "voice.json"
+    if marker.is_file():
+        try:
+            name = json.loads(marker.read_text(encoding="utf-8")).get("voice", "")
+            candidate = VOICES_DIR / f"{name}.onnx"
+            if candidate.is_file():
+                return candidate
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if VOICES_DIR.is_dir():
+        found = sorted(VOICES_DIR.glob("*.onnx"))
+        if found:
+            return found[0]
+    return None
+
+
 def pick_speaker(voice: str = "", rate: int = 1) -> Speaker:
-    """Best available text-to-speech on this machine."""
-    # Piper is the best sounding and runs well on a Pi, so prefer it if present.
-    if shutil.which("piper") and os.environ.get("JARVIS_PIPER_MODEL"):
-        return CommandSpeaker(
-            "Piper",
-            ["piper", "--model", os.environ["JARVIS_PIPER_MODEL"], "--output-raw"],
-        )
+    """Best available text-to-speech on this machine.
+
+    A downloaded Piper voice wins: it sounds far better than the system engine
+    and is the whole reason for get_voice.py. Everything else is a fallback so
+    that voice mode still works on a machine where nothing was downloaded.
+    """
+    model = chosen_piper_voice()
+    if model:
+        try:
+            return PiperSpeaker(
+                model,
+                speed=float(os.environ.get("JARVIS_VOICE_SPEED", "0.96")),
+                volume=float(os.environ.get("JARVIS_VOICE_VOLUME", "1.0")),
+            )
+        except Exception:  # noqa: BLE001 - fall through to the system engine
+            pass
+
     if os.name == "nt":
         try:
             return WindowsSpeaker(voice=voice, rate=rate)

@@ -17,3 +17,9 @@
 sounddevice>=0.4.6
 numpy>=1.24
 faster-whisper>=1.0.0
+
+# Better-sounding voices than the ones your operating system ships with,
+# including British ones. Optional — voice mode falls back to the system engine
+# without it. After installing, fetch a voice with:
+#     python deploy/get_voice.py
+piper-tts>=1.6.0

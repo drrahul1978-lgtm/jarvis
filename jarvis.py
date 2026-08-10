@@ -27,6 +27,7 @@ HELP = """
   /remember <text>   store a fact by hand
   /forget <id>       drop fact number <id>
   /reset             clear the current conversation (memories survive)
+  /voice             show or change the speaking voice (voice mode only)
   /status            hardware, model, and connection
   /verbose           toggle showing reasoning and tool calls
   /exit              quit  (Ctrl-C and Ctrl-D also work)
@@ -125,6 +126,8 @@ class Jarvis:
                 self.ui.status(self.memory.forget(int(rest)))
             else:
                 self.ui.status("Usage: /forget <id>  (see /memory)", "warn")
+        elif head == "/voice":
+            self.voice_command(rest)
         elif head == "/status":
             online = self.brain.is_up()
             self.ui.say(
@@ -137,6 +140,92 @@ class Jarvis:
             )
         else:
             self.ui.status(f"Unknown command {head}. Try /help.", "warn")
+        return True
+
+    # -- voice tuning ------------------------------------------------------
+    def voice_command(self, rest: str) -> None:
+        """`/voice` on its own reports; with arguments it switches or tunes."""
+        if not hasattr(self.ui, "speaker"):
+            self.ui.status("Not in voice mode. Restart and answer yes, or use --voice.")
+            return
+
+        from interface import voice as voice_mod
+
+        available = sorted(p.stem for p in voice_mod.VOICES_DIR.glob("*.onnx")) \
+            if voice_mod.VOICES_DIR.is_dir() else []
+
+        if not rest:
+            lines = [f"Speaking with : {self.ui.speaker.name}"]
+            lines.append(f"Downloaded    : {', '.join(available) or 'none'}")
+            lines.append("")
+            lines.append("  /voice <name>        switch voice")
+            lines.append("  /voice speed 1.1     faster; below 1 is slower")
+            lines.append("  /voice test          say a line so you can judge it")
+            lines.append("")
+            lines.append("  More voices:  python deploy/get_voice.py --list")
+            self.ui.say("\n".join(lines))
+            return
+
+        word, _, value = rest.partition(" ")
+        word, value = word.lower(), value.strip()
+
+        if word == "test":
+            self.ui.say(value or "The quick brown fox jumps over the lazy dog, sir.")
+            return
+
+        if word in ("speed", "volume"):
+            try:
+                number = float(value)
+            except ValueError:
+                self.ui.status(f"Usage: /voice {word} 1.1", "warn")
+                return
+            if not self._retune(**{word: number}):
+                self.ui.status("This engine has no adjustable settings.", "warn")
+            return
+
+        if word in available:
+            if self._retune(model=voice_mod.VOICES_DIR / f"{word}.onnx"):
+                self.ui.say(f"Switched to {word}.")
+            return
+
+        self.ui.status(
+            f"Unknown voice {word!r}. Downloaded: {', '.join(available) or 'none'}. "
+            "Get more with: python deploy/get_voice.py --list",
+            "warn",
+        )
+
+    def _retune(self, model=None, speed=None, volume=None) -> bool:
+        """Rebuild the speaker with new settings, keeping the current voice."""
+        from interface.voice import PiperSpeaker
+
+        current = self.ui.speaker
+        if not isinstance(current, PiperSpeaker):
+            return False
+
+        path = model or (getattr(current, "model_name", None) and
+                         __import__("interface.voice", fromlist=["voice"]).VOICES_DIR
+                         / f"{current.model_name}.onnx")
+        if not path:
+            return False
+
+        # length_scale is the inverse of speed, so recover speed to adjust it.
+        old_speed = 1.0 / (current.config.length_scale or 1.0)
+        try:
+            new = PiperSpeaker(
+                path,
+                speed=speed if speed is not None else old_speed,
+                volume=volume if volume is not None else (current.config.volume or 1.0),
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.ui.status(f"Could not load that voice: {exc}", "warn")
+            return False
+
+        current.close()
+        self.ui.speaker = new
+        if speed is not None:
+            self.ui.status(f"Speed set to {speed}.")
+        if volume is not None:
+            self.ui.status(f"Volume set to {volume}.")
         return True
 
     # -- loop --------------------------------------------------------------

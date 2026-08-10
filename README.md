@@ -128,10 +128,49 @@ conversation instead of a progress bar. Markdown, and URLs are stripped before
 speaking — nothing reads asterisks out loud.
 
 **Speaking needs no installation.** Windows uses SAPI, macOS uses `say`, Linux
-and Raspberry Pi OS use espeak-ng (`sudo apt install espeak-ng`). If
-[Piper](https://github.com/rhasspy/piper) is installed it is preferred, since it
-sounds far better and still runs on a Pi — point `JARVIS_PIPER_MODEL` at a voice
-file.
+and Raspberry Pi OS use espeak-ng (`sudo apt install espeak-ng`).
+
+### A better voice
+
+The built-in voices are flat, and on Windows they are American. Piper voices
+sound considerably better, are free, and still run on a Pi:
+
+```bash
+python deploy/get_voice.py
+```
+
+That fetches `en_GB-alan-medium` — a measured British male voice, the closest of
+the set to an unflappable butler — makes it the default, and speaks a line so you
+can judge it. Jarvis prefers it automatically from then on.
+
+```bash
+python deploy/get_voice.py --list     # what else is available
+python deploy/get_voice.py --voice en_GB-northern_english_male-medium
+```
+
+Audition every voice before downloading at
+[rhasspy.github.io/piper-samples](https://rhasspy.github.io/piper-samples/).
+Any name from that collection works.
+
+### Tuning it
+
+Inside Jarvis, `/voice` reports what is speaking and what is installed:
+
+| Command | Effect |
+| --- | --- |
+| `/voice` | current voice, installed voices, and these options |
+| `/voice en_GB-cori-high` | switch to another downloaded voice |
+| `/voice speed 1.15` | quicker; below 1 is slower and more deliberate |
+| `/voice volume 0.8` | quieter |
+| `/voice test` | say a line so you can hear the change |
+
+Changes apply immediately, no restart. To make them permanent, set
+`JARVIS_VOICE_SPEED` or `JARVIS_VOICE_VOLUME`, or `JARVIS_VOICE` to pick the
+voice.
+
+A note on what this is not: these are synthetic voices in a British register.
+None of them impersonates any particular performer, and cloning a real person's
+voice is not something this project does.
 
 **Listening does need installation**, because capturing a microphone and running
 speech recognition cannot be done from the standard library:
