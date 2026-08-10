@@ -9,8 +9,12 @@ board at startup and picks a model that fits.
 
 - **Persistent memory** — remembers facts about you across sessions, in SQLite.
 - **Web search** — searches and reads pages when it needs current information.
-- **Zero dependencies** — Python 3.10+ standard library only. No pip install.
+- **Zero dependencies** — [Python] 3.10+ standard library only. No pip install.
 - **Two front-ends** — a terminal REPL, and a small web server for headless use.
+
+**Requirements:** [Ollama] and [Python] 3.10 or newer, both free. Python already
+ships with Raspberry Pi OS and macOS — check with `python3 --version` first. On
+Windows, tick *Add python.exe to PATH* during installation.
 
 ---
 
@@ -289,4 +293,5 @@ limitation, not the memory.
 **Doesn't search when it should** — same cause. Small models under-use tools.
 Asking directly ("search the web for X") works reliably.
 
-[Ollama]: https://ollama.com
+[Ollama]: https://ollama.com/download
+[Python]: https://www.python.org/downloads/

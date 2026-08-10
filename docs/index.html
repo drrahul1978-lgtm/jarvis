@@ -254,12 +254,25 @@
   <h2>Install it</h2>
 
   <p>
-    You need <a href="https://ollama.com">Ollama</a>, which runs the model, and Python
-    3.10 or newer. Both are free. Expect to download a few gigabytes once; after that
-    nothing further is needed.
+    You need two things, both free:
+    <a href="https://ollama.com/download">Ollama</a>, which runs the model, and
+    <a href="https://www.python.org/downloads/">Python</a> 3.10 or newer. Expect to
+    download a few gigabytes once; after that nothing further is needed.
+  </p>
+
+  <p>
+    On a Raspberry Pi, Python is already installed — check with
+    <code>python3 --version</code> before downloading anything. On macOS it is also
+    usually present. On Windows you will most likely need to install it, and you must
+    tick <em>Add python.exe to PATH</em> in the installer or the commands below will
+    not be found.
   </p>
 
   <h3>1. Install Ollama</h3>
+  <p>
+    Download it from <a href="https://ollama.com/download">ollama.com/download</a>, or
+    from a terminal.
+  </p>
   <p>On Windows:</p>
   <pre class="cmd"><code>winget install Ollama.Ollama</code></pre>
   <p>On a Raspberry Pi, Linux or macOS:</p>
