@@ -168,6 +168,19 @@ def _describe(call: dict) -> str:
     return f"using {name}"
 
 
+def ask_yes_no(ui, question: str, default: bool = False) -> bool:
+    """A single startup question. Anything unexpected keeps the safe default."""
+    hint = "[Y/n]" if default else "[y/N]"
+    try:
+        answer = input(f"\n  {question}? {hint} ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    if not answer:
+        return default
+    return answer[0] == "y"
+
+
 def preflight(ui, brain) -> bool:
     """Verify Ollama is reachable and the model is present; explain if not."""
     if not brain.is_up():
@@ -202,16 +215,16 @@ def main() -> int:
         "--no-mic", action="store_true",
         help="With --voice: speak answers, but keep typing the questions.",
     )
+    parser.add_argument(
+        "--no-voice", action="store_true",
+        help="Stay in text mode without being asked.",
+    )
     parser.add_argument("--tts-voice", default="", help="Name of the system voice to use.")
     args = parser.parse_args()
 
     ui = ConsoleInterface()
+    console = ui
     voice = None
-    if args.voice:
-        from interface.voice import VoiceInterface
-
-        voice = VoiceInterface(ui, listen=not args.no_mic, voice=args.tts_voice)
-        ui = voice
     brain = Brain(model=args.model, host=args.host)
 
     # An explicit choice always wins; otherwise prefer Jarvis's own build over
@@ -235,12 +248,23 @@ def main() -> int:
         memory.close()
         return 1
 
-    if voice:
+    # Voice is offered rather than assumed: asked once at startup, unless a
+    # flag already settles it or there is nobody at the keyboard to answer.
+    want_voice = args.voice
+    if not args.voice and not args.no_voice and not args.once and sys.stdin.isatty():
+        want_voice = ask_yes_no(console, "Use voice? Jarvis will speak its answers")
+
+    if want_voice:
+        from interface.voice import VoiceInterface
+
+        console.status("Starting voice (first run loads a speech model)...")
+        voice = VoiceInterface(console, listen=not args.no_mic, voice=args.tts_voice)
+        ui = voice
         ui.status(voice.describe())
         if voice.listen_error:
             ui.status(
-                "Microphone unavailable, so questions stay typed. "
-                "Install it with:  pip install -r requirements-voice.txt",
+                "Microphone unavailable, so questions stay typed. Install it with: "
+                "pip install -r requirements-voice.txt",
                 "warn",
             )
 

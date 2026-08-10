@@ -108,6 +108,16 @@ With an RTX-class GPU the 8B model runs comfortably at conversational speed.
 
 ## Voice
 
+Started normally, Jarvis asks once before doing anything:
+
+```
+  Use voice? Jarvis will speak its answers? [y/N]
+```
+
+Press Enter for text, or `y` for voice. The question is skipped entirely when
+there is nobody at the keyboard — piped input, `--once`, or a service — so
+scripts never hang on it. Use `--voice` or `--no-voice` to answer in advance.
+
 ```bash
 python jarvis.py --voice
 ```
@@ -141,6 +151,7 @@ the questions. It says so at startup rather than failing.
 | --- | --- |
 | `--voice` | speak answers, listen for questions |
 | `--voice --no-mic` | speak answers, keep typing questions |
+| `--no-voice` | stay in text mode without being asked |
 | `--tts-voice "Microsoft Zira Desktop"` | pick a specific system voice |
 
 At the prompt, press Enter on an empty line to talk; recording stops on its own
