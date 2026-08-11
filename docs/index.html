@@ -402,6 +402,30 @@ python jarvis.py</code></pre>
     project does.
   </p>
 
+  <h2>Controlling your home</h2>
+
+  <p>
+    If you run <a href="https://www.home-assistant.io/">Home Assistant</a>, Jarvis
+    can operate it. Ask it to connect, or type <code>/home</code>, and it walks you
+    through it: the address of your Home Assistant on the network, and a long-lived
+    access token from your profile page. Then you can simply say what you want —
+    turn the kitchen light off, dim the lamp to thirty percent, is the back door
+    open, set the thermostat to twenty-one.
+  </p>
+
+  <p>
+    Names are matched the way people speak rather than by entity id, so "bedroom
+    lamp", "bedroom", and even a typo all find the right light. Where a name is
+    ambiguous it asks which one instead of guessing.
+  </p>
+
+  <p>
+    Your token is never typed into the conversation. Every message is written to
+    the transcript database, so a token pasted at Jarvis would be stored in plain
+    text; <code>/home</code> reads it through a hidden prompt and writes it straight
+    to disk, outside the repository.
+  </p>
+
   <h2>What it can and cannot do</h2>
 
   <table>

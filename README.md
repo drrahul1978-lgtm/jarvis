@@ -296,6 +296,56 @@ about a second after you do. Type instead at any time — both work in the same
 session. If it keeps mishearing silence as speech, raise `JARVIS_MIC_THRESHOLD`
 from its default of `0.012`.
 
+## Controlling your home
+
+If you run [Home Assistant](https://www.home-assistant.io/), Jarvis can operate
+it. Ask it to connect, or type:
+
+```
+/home
+```
+
+It asks for two things: the address of your Home Assistant on the network
+(`192.168.1.50` is enough — the port is assumed), and a long-lived access token.
+To get one: open Home Assistant, click your name at the bottom-left, choose
+**Security**, scroll to the bottom, and create a long-lived access token.
+
+It verifies both before saving anything, and tells you which one was wrong if it
+fails.
+
+> **Your token never goes through the conversation.** Every message you type is
+> written to the transcript database, so a token pasted at Jarvis would sit
+> there in plain text and in every backup. `/home` reads it through a hidden
+> prompt and writes it straight to `data/home_assistant.json`, which is inside
+> the git-ignored data directory. Jarvis is also told never to ask you for it
+> directly.
+
+Then just talk:
+
+```
+you > turn the kitchen light off
+you > dim the bedroom lamp to 30%
+you > is the back door open?
+you > what's the temperature outside?
+you > set the hall thermostat to 21
+```
+
+| Command | Effect |
+| --- | --- |
+| `/home` | connect, or show what is connected |
+| `/home forget` | delete the stored token |
+
+Names are matched the way people speak: "bedroom lamp", "bedroom", even a typo
+like "bedrom lmap" all find the right light. If a name is ambiguous — "kitchen"
+when there are two kitchen lights — it asks which one rather than guessing.
+
+Before it is connected, asking Jarvis to turn something on gets you the setup
+instructions rather than a flat denial that it can.
+
+**Tested against a mock instance, not a real one.** The API calls, name
+matching, and error handling are verified; nobody has yet pointed it at an
+actual Home Assistant. Expect one or two rough edges on first contact.
+
 ## Making it its own model
 
 By default Jarvis is a personality wrapped around a stock model. One command

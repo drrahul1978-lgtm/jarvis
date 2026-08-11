@@ -180,6 +180,100 @@ def _system_status(**_):
     return "\n".join(lines)
 
 
+# --- the house -----------------------------------------------------------
+# Registered whether or not Home Assistant is connected, so that asking Jarvis
+# to turn the lights on gets a useful "here is how to set that up" instead of a
+# flat denial that it has any such ability.
+
+
+def _home_guard(fn, *args, **kwargs):
+    from . import homeassistant
+
+    try:
+        return fn(*args, **kwargs)
+    except homeassistant.NotConfigured as exc:
+        return (
+            f"{exc} Tell the user to type /home to connect it — it takes about a "
+            "minute and needs a token from their Home Assistant profile page."
+        )
+    except homeassistant.HomeAssistantError as exc:
+        return str(exc)
+
+
+@tool(
+    "home_devices",
+    "List the devices, lights, switches and sensors in the user's home, with "
+    "their current state. Use this before controlling anything you are unsure "
+    "of, and to answer questions about what is in the house.",
+    {
+        "kind": {
+            "type": "string",
+            "description": "Optional filter, e.g. 'light', 'sensor', 'kitchen'.",
+        }
+    },
+    required=[],
+)
+def _home_devices(kind: str = "", **_):
+    from . import homeassistant
+
+    return _home_guard(homeassistant.summarise, kind)
+
+
+@tool(
+    "home_state",
+    "Check one thing in the home: whether a light is on, a door open, or what "
+    "a sensor currently reads.",
+    {"name": {"type": "string", "description": "What it is called, e.g. 'kitchen light'."}},
+)
+def _home_state(name: str, **_):
+    from . import homeassistant
+
+    return _home_guard(homeassistant.state_of, name)
+
+
+@tool(
+    "home_control",
+    "Turn something in the home on or off. Only for lights, switches, fans, "
+    "media players and similar. Say what you did afterwards.",
+    {
+        "name": {"type": "string", "description": "What it is called, e.g. 'lamp'."},
+        "action": {"type": "string", "description": "on, off, or toggle."},
+    },
+)
+def _home_control(name: str, action: str, **_):
+    from . import homeassistant
+
+    return _home_guard(homeassistant.control, name, action)
+
+
+@tool(
+    "home_brightness",
+    "Dim or brighten a light, as a percentage from 0 to 100.",
+    {
+        "name": {"type": "string", "description": "The light's name."},
+        "percent": {"type": "integer", "description": "0 turns it off, 100 is full."},
+    },
+)
+def _home_brightness(name: str, percent: int, **_):
+    from . import homeassistant
+
+    return _home_guard(homeassistant.set_brightness, name, percent)
+
+
+@tool(
+    "home_temperature",
+    "Set a thermostat to a target temperature.",
+    {
+        "name": {"type": "string", "description": "The thermostat's name."},
+        "degrees": {"type": "number", "description": "Target temperature."},
+    },
+)
+def _home_temperature(name: str, degrees: float, **_):
+    from . import homeassistant
+
+    return _home_guard(homeassistant.set_temperature, name, degrees)
+
+
 # --- registry access -----------------------------------------------------
 
 

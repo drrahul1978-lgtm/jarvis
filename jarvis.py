@@ -29,6 +29,7 @@ HELP = """
   /reset             clear the current conversation (memories survive)
   /voice             show or change the speaking voice (voice mode only)
   /wake [on|off|word]  hands-free listening (voice mode only)
+  /home              connect to Home Assistant, or /home forget
   /status            hardware, model, and connection
   /verbose           toggle showing reasoning and tool calls
   /exit              quit  (Ctrl-C and Ctrl-D also work)
@@ -138,6 +139,8 @@ class Jarvis:
             self.voice_command(rest)
         elif head == "/wake":
             self.wake_command(rest)
+        elif head == "/home":
+            self.home_command(rest)
         elif head == "/status":
             online = self.brain.is_up()
             self.ui.say(
@@ -202,6 +205,89 @@ class Jarvis:
             f"Unknown voice {word!r}. Downloaded: {', '.join(available) or 'none'}. "
             "Get more with: python deploy/get_voice.py --list",
             "warn",
+        )
+
+    def home_command(self, rest: str) -> None:
+        """Connect Jarvis to Home Assistant, or report and undo the connection.
+
+        The token is read with getpass and written straight to disk. It is never
+        put through the conversation, because every message the user types is
+        written to the transcript database — a token typed at Jarvis would sit
+        there in plaintext, and in every backup of it.
+        """
+        import getpass
+
+        from core import homeassistant as ha
+
+        word = rest.strip().lower()
+
+        if word in ("forget", "disconnect", "remove"):
+            self.ui.status("Disconnected." if ha.forget() else "Was not connected.")
+            return
+
+        if not word and ha.is_configured():
+            try:
+                where = ha.load()["url"]
+                self.ui.say(
+                    f"Connected to Home Assistant at {where}.\n"
+                    f"  {ha.summarise()[:400]}\n\n"
+                    "  /home again      reconnect with a new token\n"
+                    "  /home forget     remove the connection"
+                )
+            except ha.HomeAssistantError as exc:
+                self.ui.status(f"Configured, but not reachable: {exc}", "warn")
+            return
+
+        if not sys.stdin.isatty():
+            self.ui.status("Run /home from a terminal — it needs a hidden prompt.", "warn")
+            return
+
+        self.ui.say(
+            "Connecting to Home Assistant.\n\n"
+            "  You need two things:\n"
+            "   1. Its address on your network, e.g. 192.168.1.50\n"
+            "   2. A long-lived access token\n\n"
+            "  To get the token: open Home Assistant, click your name at the\n"
+            "  bottom-left, choose the Security tab, scroll to the bottom and\n"
+            "  create a long-lived access token.\n\n"
+            "  The token is written straight to disk and never appears in this\n"
+            "  conversation or its history. Press Enter alone to cancel."
+        )
+
+        try:
+            raw = input("\n  Address: ").strip()
+            if not raw:
+                self.ui.status("Cancelled.")
+                return
+            url = ha.normalise_url(raw)
+
+            # getpass keeps it off the screen and out of the transcript.
+            token = getpass.getpass(f"  Token for {url} (hidden): ").strip()
+            if not token:
+                self.ui.status("Cancelled.")
+                return
+        except (EOFError, KeyboardInterrupt):
+            print()
+            self.ui.status("Cancelled.")
+            return
+
+        self.ui.status(f"Checking {url}...")
+        try:
+            who = ha.check(url, token)
+        except ha.HomeAssistantError as exc:
+            self.ui.status(str(exc), "error")
+            self.ui.status("Nothing was saved. Try /home again.", "warn")
+            return
+
+        ha.save(url, token)
+        self.ui.say(f"Connected to {who}.")
+        try:
+            self.ui.status(f"Found: {len(ha.states())} entities.")
+        except ha.HomeAssistantError:
+            pass
+        self.ui.say(
+            "You can now ask me to turn things on and off, dim lights, set the "
+            "thermostat, or tell you what is on."
         )
 
     def wake_command(self, rest: str) -> None:
