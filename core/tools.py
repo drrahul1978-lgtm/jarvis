@@ -274,6 +274,151 @@ def _home_temperature(name: str, degrees: float, **_):
     return _home_guard(homeassistant.set_temperature, name, degrees)
 
 
+# --- speakers around the house -------------------------------------------
+
+
+def _cast_guard(fn, *args, **kwargs):
+    from . import cast
+
+    try:
+        return fn(*args, **kwargs)
+    except (cast.CastUnavailable, cast.CastError) as exc:
+        return str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return f"Speaker problem: {type(exc).__name__}: {exc}"
+
+
+@tool(
+    "speakers",
+    "List the Google Home, Nest and Chromecast speakers on the network that you "
+    "can talk through.",
+    {},
+    required=[],
+)
+def _speakers(**_):
+    from . import cast
+
+    return _cast_guard(cast.listing)
+
+
+@tool(
+    "speak_on",
+    "Say something out loud through a specific speaker in the house, in your own "
+    "voice. Use when asked to announce something, or to answer somewhere else.",
+    {
+        "speaker": {"type": "string", "description": "Speaker name, e.g. 'kitchen'."},
+        "text": {"type": "string", "description": "What to say. Keep it short."},
+    },
+)
+def _speak_on(speaker: str, text: str, **_):
+    from . import cast
+
+    return _cast_guard(cast.say, speaker, text)
+
+
+@tool(
+    "speaker_volume",
+    "Set the volume of a speaker, 0 to 100.",
+    {
+        "speaker": {"type": "string", "description": "Speaker name."},
+        "percent": {"type": "integer", "description": "0 is silent, 100 is loudest."},
+    },
+)
+def _speaker_volume(speaker: str, percent: int, **_):
+    from . import cast
+
+    return _cast_guard(cast.set_volume, speaker, percent)
+
+
+@tool(
+    "speaker_stop",
+    "Stop whatever a speaker is currently playing.",
+    {"speaker": {"type": "string", "description": "Speaker name."}},
+)
+def _speaker_stop(speaker: str, **_):
+    from . import cast
+
+    return _cast_guard(cast.stop, speaker)
+
+
+# --- Govee lights, without a hub -----------------------------------------
+# Home Assistant exists because every vendor speaks its own protocol. Without
+# it, each brand needs its own integration; this is that, for Govee.
+
+
+def _govee_guard(fn, *args, **kwargs):
+    from . import govee
+
+    try:
+        return fn(*args, **kwargs)
+    except govee.GoveeError as exc:
+        return str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return f"Govee problem: {type(exc).__name__}: {exc}"
+
+
+@tool(
+    "govee_lights",
+    "List the Govee lights on the local network. Use this first if you are not "
+    "sure which lights exist.",
+    {},
+    required=[],
+)
+def _govee_lights(**_):
+    from . import govee
+
+    return _govee_guard(govee.listing)
+
+
+@tool(
+    "govee_switch",
+    "Turn a Govee light on or off.",
+    {
+        "name": {
+            "type": "string",
+            "description": "Which light. Leave empty if there is only one.",
+        },
+        "on": {"type": "boolean", "description": "true for on, false for off."},
+    },
+    required=["on"],
+)
+def _govee_switch(on: bool, name: str = "", **_):
+    from . import govee
+
+    return _govee_guard(govee.turn, name, bool(on))
+
+
+@tool(
+    "govee_brightness",
+    "Set how bright a Govee light is, from 0 to 100 percent.",
+    {
+        "name": {"type": "string", "description": "Which light. May be empty."},
+        "percent": {"type": "integer", "description": "0 to 100."},
+    },
+    required=["percent"],
+)
+def _govee_brightness(percent: int, name: str = "", **_):
+    from . import govee
+
+    return _govee_guard(govee.brightness, name, percent)
+
+
+@tool(
+    "govee_colour",
+    "Set the colour of a Govee light. Accepts colour names like 'warm white' or "
+    "'purple', or a hex code such as #00ff88.",
+    {
+        "name": {"type": "string", "description": "Which light. May be empty."},
+        "colour": {"type": "string", "description": "Colour name or hex code."},
+    },
+    required=["colour"],
+)
+def _govee_colour(colour: str, name: str = "", **_):
+    from . import govee
+
+    return _govee_guard(govee.colour, name, colour)
+
+
 # --- registry access -----------------------------------------------------
 
 

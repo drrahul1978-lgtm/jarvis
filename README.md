@@ -346,6 +346,48 @@ instructions rather than a flat denial that it can.
 matching, and error handling are verified; nobody has yet pointed it at an
 actual Home Assistant. Expect one or two rough edges on first contact.
 
+## Smart devices without a hub
+
+Home Assistant exists because every manufacturer speaks its own protocol.
+Without it, each brand needs its own integration. Two are built in.
+
+### Govee lights
+
+Many Govee devices accept control directly over the local network — no account,
+no API key, no internet.
+
+```
+you > turn the govee strip on
+you > set the strip to warm white
+you > dim it to 20%
+```
+
+**LAN control is off by default.** Open the Govee Home app, go into each
+device's settings, and switch on *LAN Control*. Some older models do not support
+it and need the cloud API instead. If nothing responds, that setting is almost
+always the reason.
+
+### Google Home, Nest and Chromecast speakers
+
+Jarvis can speak through the Cast devices on your network, in its own voice.
+
+```
+you > announce dinner on the family room display
+you > set the bedroom speaker to 30%
+```
+
+It synthesises the line, serves it briefly on your LAN, and points the speaker
+at it — which is how casting works; a speaker fetches a URL rather than being
+sent audio. Nothing goes through Google's servers.
+
+**What this cannot do:** make "Hey Google" reach Jarvis. Google does not allow
+third parties to replace the assistant on their devices, and no amount of code
+here changes that. This is Jarvis talking *through* the speakers, not answering
+*as* them.
+
+Needs `pip install PyChromecast`, and a Piper voice from
+`deploy/get_voice.py`.
+
 ## Making it its own model
 
 By default Jarvis is a personality wrapped around a stock model. One command
