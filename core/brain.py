@@ -127,6 +127,9 @@ class Brain:
                     except json.JSONDecodeError:
                         args = {}
 
+                # Announced before it runs, not after: fetching a page can take
+                # seconds, and the caller needs something to show meanwhile.
+                yield ("tool_start", {"name": name, "arguments": args})
                 result = tools.dispatch(name, args)
                 yield ("tool", {"name": name, "arguments": args, "result": result})
                 messages.append(

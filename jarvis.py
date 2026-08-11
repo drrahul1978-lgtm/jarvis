@@ -66,12 +66,17 @@ class Jarvis:
         self.memory.log("user", text)
 
         answer = ""
+        self.ui.busy("thinking")
         for kind, payload in self.brain.ask(self.messages):
             if kind == "token":
                 self.ui.stream(payload)
             elif kind == "think" and self.verbose:
                 self.ui.status(payload.strip()[:200], "info")
+            elif kind == "tool_start":
+                self.ui.busy(_working_on(payload))
             elif kind == "tool":
+                # Back to waiting on the model until it speaks or calls again.
+                self.ui.busy("thinking")
                 if self.verbose:
                     self.ui.status(
                         f"{payload['name']}({payload['arguments']}) -> "
@@ -80,11 +85,13 @@ class Jarvis:
                 else:
                     self.ui.status(_describe(payload))
             elif kind == "error":
+                self.ui.idle()
                 self.ui.status(payload, "error")
                 return
             elif kind == "done":
                 answer = payload
 
+        self.ui.idle()
         self.ui.end_stream()
         if answer:
             self.memory.log("assistant", answer)
@@ -289,6 +296,22 @@ class Jarvis:
             self.turn(text)
 
         self.ui.say("Standing by.")
+
+
+def _working_on(call: dict) -> str:
+    """Present tense, for the marker shown while a tool is still running."""
+    name, args = call["name"], call.get("arguments", {})
+    if name == "web_search":
+        return f"searching the web for \"{args.get('query', '')}\""
+    if name == "fetch_page":
+        return f"reading {args.get('url', '')[:60]}"
+    if name == "remember":
+        return "saving that to memory"
+    if name == "recall":
+        return "checking what I know"
+    if name == "system_status":
+        return "checking the system"
+    return f"running {name}"
 
 
 def _describe(call: dict) -> str:

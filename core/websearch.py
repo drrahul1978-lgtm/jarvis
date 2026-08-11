@@ -7,6 +7,7 @@ instead of a wall of div soup.
 
 import gzip
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -86,20 +87,53 @@ class _ResultParser(HTMLParser):
 
 
 def search(query: str, max_results: int = 5) -> str:
-    """Search the web. Returns a compact numbered digest for the model."""
-    try:
-        body = urllib.parse.urlencode({"q": query, "kl": "wt-wt"}).encode()
-        html = _get(SEARCH_URL, data=body)
-    except urllib.error.URLError as exc:
-        return f"Search failed (no network?): {exc}"
-    except Exception as exc:  # noqa: BLE001 - surface anything to the model
-        return f"Search failed: {exc}"
+    """Search the web. Returns a compact numbered digest for the model.
+
+    Search engines drop connections on bursts of queries, which surfaced as a
+    flat "no network?" even with the network fine. Two shapes of request and a
+    short pause between attempts cover the common transient cases; a genuine
+    outage still fails, just accurately.
+    """
+    encoded = urllib.parse.urlencode({"q": query, "kl": "wt-wt"})
+    attempts = (
+        (SEARCH_URL, encoded.encode()),                 # POST
+        (f"{SEARCH_URL}?{encoded}", None),              # GET
+    )
+
+    last = ""
+    for index, (url, body) in enumerate(attempts):
+        try:
+            html = _get(url, data=body)
+            break
+        except Exception as exc:  # noqa: BLE001 - retry, then report
+            last = f"{type(exc).__name__}: {exc}"
+            if index + 1 < len(attempts):
+                time.sleep(1.5)
+    else:
+        return (
+            f"Search failed after {len(attempts)} attempts ({last}). "
+            "The connection may be down, or the search engine may be refusing "
+            "requests for the moment. Answer from what you already know, and "
+            "say that you could not check."
+        )
 
     parser = _ResultParser()
     parser.feed(html)
     results = [r for r in parser.results if r["url"].startswith("http")][:max_results]
 
     if not results:
+        # A refused request comes back as a short page with no result markup at
+        # all — not an error. Reporting that as "no results" is worse than
+        # useless: it tells the model that nothing on the subject exists, and it
+        # will confidently pass that on. Say what actually happened instead.
+        if "result__a" not in html and len(html) < 20000:
+            return (
+                "The search engine refused this request, most likely rate "
+                "limiting after several searches in quick succession. This is "
+                "NOT evidence that nothing exists on the subject. Tell the user "
+                "you could not check just now and answer from your own "
+                "knowledge if you can, or suggest trying again shortly."
+            )
         return f"No results for {query!r}."
 
     lines = [f"Search results for {query!r}:"]

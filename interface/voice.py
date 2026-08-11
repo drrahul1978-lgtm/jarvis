@@ -273,8 +273,15 @@ class WhisperListener:
         self.model = WhisperModel(size, device="cpu", compute_type="int8")
         self.size = size
 
-    def record(self, max_seconds: float = 20.0, silence_seconds: float = 1.2) -> "any":
+    # How long a pause means "they have finished talking". This is dead air on
+    # every single turn, and transcription itself takes about a fifth of a
+    # second, so it dominates the wait. Long enough not to cut people off
+    # mid-sentence, short enough not to feel broken.
+    SILENCE = float(os.environ.get("JARVIS_SILENCE", "0.6"))
+
+    def record(self, max_seconds: float = 20.0, silence_seconds: float = 0.0) -> "any":
         """Capture until the speaker has been quiet for `silence_seconds`."""
+        silence_seconds = silence_seconds or self.SILENCE
         np, sd = self.np, self.sd
         block = int(self.rate * 0.1)
         frames, quiet, started = [], 0.0, False
@@ -469,7 +476,9 @@ class VoiceInterface:
         while True:
             try:
                 self.listener.wait_for_sound()
-                audio = self.listener.record(max_seconds=8.0, silence_seconds=0.9)
+                # A wake word is one word, so it needs less trailing silence
+                # than a full question does.
+                audio = self.listener.record(max_seconds=8.0, silence_seconds=0.45)
                 heard = self.listener.transcribe(audio)
             except KeyboardInterrupt:
                 return ""
