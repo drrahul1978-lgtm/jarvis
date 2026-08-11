@@ -168,30 +168,86 @@ def detect_boxes(frame, threshold: float | None = None) -> list[dict]:
     return found
 
 
-# The app's accent, in the order OpenCV wants it.
-_BOX_BGR = (92, 164, 200)
-_TEXT_BGR = (26, 26, 26)
+_TEXT_BGR = (24, 24, 24)
+_colours: dict[str, tuple] = {}
+_class_order: dict[str, int] | None = None
 
 
-def annotate(frame, found: list[dict]):
-    """Draw a labelled box around everything found. Modifies a copy."""
+def _class_index(name: str):
+    """Where this class sits in the detector's list, if the detector is loaded.
+
+    Deliberately does not force the model to load: colours are asked for by the
+    interface, and loading a detector to paint a label would be absurd.
+    """
+    global _class_order
+    if _class_order is None:
+        if _model is None:
+            return None
+        _class_order = {label: i for i, label in enumerate(_model.names.values())}
+    return _class_order.get(name)
+
+
+def colour_for(name: str) -> tuple:
+    """A stable, distinct colour per object type.
+
+    Hue comes from a hash of the name, so a person is the same colour in every
+    frame and every session — a box that changes colour between frames reads as
+    a different object. Saturation and value are fixed high, which keeps every
+    colour legible against a dark video frame and stops two classes landing on
+    near-identical muddy tones.
+    """
+    if name in _colours:
+        return _colours[name]
+
+    import colorsys
+    import hashlib
+
+    # The golden angle only guarantees separation when it multiplies a
+    # *counter*. Feeding it hashes still collides — an early attempt put cell
+    # phone and backpack one degree apart. The detector's class list is fixed
+    # and known, so position in that list is the counter, which spreads all
+    # eighty as far apart as they can go. Unknown names fall back to a hash.
+    index = _class_index(name)
+    if index is None:
+        index = int.from_bytes(hashlib.md5(name.encode("utf-8")).digest()[:4], "big")
+    hue = (index * 0.618033988749895) % 1.0
+    # Vary lightness a little by class too, so two hues that do land close
+    # together are still told apart at a glance.
+    value = 0.88 + 0.12 * ((index >> 8) % 2)
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.82, value)
+    bgr = (int(blue * 255), int(green * 255), int(red * 255))
+    _colours[name] = bgr
+    return bgr
+
+
+def colour_hex(name: str) -> str:
+    """The same colour as a #rrggbb string, for the interface."""
+    blue, green, red = colour_for(name)
+    return f"#{red:02x}{green:02x}{blue:02x}"
+
+
+def annotate(frame, found: list[dict], thickness: int = 2):
+    """Draw a labelled box around everything found. Works on a copy."""
     import cv2
 
     canvas = frame.copy()
+    scale = max(0.4, min(frame.shape[1] / 1100, 0.9))
+
     for item in found:
         x1, y1, x2, y2 = item["box"]
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), _BOX_BGR, 2)
+        colour = colour_for(item["name"])
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), colour, thickness)
 
         label = f"{item['name']} {item['confidence']:.0%}"
         (width, height), _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            label, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)
 
         # Keep the caption on screen when the box touches the top edge.
-        top = max(y1, height + 8)
-        cv2.rectangle(canvas, (x1, top - height - 8), (x1 + width + 8, top),
-                      _BOX_BGR, -1)
-        cv2.putText(canvas, label, (x1 + 4, top - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, _TEXT_BGR, 1, cv2.LINE_AA)
+        top = max(y1, height + 9)
+        cv2.rectangle(canvas, (x1, top - height - 9), (x1 + width + 9, top),
+                      colour, -1)
+        cv2.putText(canvas, label, (x1 + 5, top - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, scale, _TEXT_BGR, 1, cv2.LINE_AA)
     return canvas
 
 
@@ -308,6 +364,84 @@ def known_objects() -> str:
     model = _load()
     labels = sorted(model.names.values())
     return f"I can recognise {len(labels)} object types: " + ", ".join(labels)
+
+
+def _encode(frame, max_width: int = 800) -> str:
+    """Frame to base64 JPEG, which is what a vision model wants."""
+    import base64
+
+    import cv2
+
+    height, width = frame.shape[:2]
+    if width > max_width:
+        scale = max_width / width
+        frame = cv2.resize(frame, (max_width, int(height * scale)))
+    ok, buffer = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
+    if not ok:
+        raise VisionError("Could not encode the camera frame.")
+    return base64.b64encode(buffer.tobytes()).decode("ascii")
+
+
+def describe(question: str = "", index: int | None = None,
+             timeout: int = 180) -> str:
+    """Ask a vision model what it is actually looking at.
+
+    The detector knows eighty everyday classes and nothing else, which is fine
+    for "is there a person" and useless for "what is this thing on my desk".
+    This sends the frame to a vision-capable model instead, so the answer is
+    not limited to a fixed list.
+
+    It costs seconds rather than milliseconds, so it is a deliberate act — not
+    something the live view does on every frame.
+    """
+    import json
+    import urllib.error
+    import urllib.request
+
+    frame = grab(index, fresh=True)
+    image = _encode(frame)
+
+    prompt = question.strip() or (
+        "Identify the main objects in this image, especially anything unusual. "
+        "Name them specifically — brand, model or type if you can tell. "
+        "Two or three sentences, no preamble."
+    )
+
+    payload = {
+        "model": config.VISION_LLM,
+        "messages": [{"role": "user", "content": prompt, "images": [image]}],
+        "stream": False,
+        "options": {"temperature": 0.2},
+    }
+    request = urllib.request.Request(
+        f"{config.OLLAMA_HOST.rstrip('/')}/api/chat",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return (
+                f"No vision model installed. Get one with:  "
+                f"ollama pull {config.VISION_LLM}\n"
+                "It is a few gigabytes, and lets me identify things outside "
+                "the eighty everyday objects the fast detector knows."
+            )
+        return f"The vision model returned HTTP {exc.code}."
+    except urllib.error.URLError as exc:
+        return f"Could not reach Ollama ({exc.reason})."
+    except Exception as exc:  # noqa: BLE001
+        return f"Vision model failed: {type(exc).__name__}: {exc}"
+
+    answer = (body.get("message") or {}).get("content", "").strip()
+    if not answer:
+        return "The vision model returned nothing."
+
+    # Say which eye was used, so a slow answer is not mistaken for the fast one.
+    return f"{answer}\n\n(Looked properly, using {config.VISION_LLM}.)"
 
 
 def warm() -> None:

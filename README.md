@@ -410,18 +410,84 @@ jarvis > I can see a person and a bed.
 you > is my phone on the desk?
 ```
 
-Object recognition runs locally with YOLO — no image leaves the machine, which
-matters for a camera pointed at your home. It knows 80 everyday object types:
-people, phones, keyboards, laptops, remotes, cups, chairs, books and so on. It
-cannot recognise arbitrary things, and says so rather than guessing.
+Everything runs locally — no image leaves the machine, which matters rather a
+lot for a camera pointed at your home.
+
+**Two eyes, for different jobs.** The fast detector answers in milliseconds but
+knows only 80 everyday object types. The vision model takes a few seconds and
+has no fixed list at all, so it can name things the detector never could. Jarvis
+picks between them: `look` for "is anyone there", `identify` for "what *is*
+that".
+
+```bash
+ollama pull moondream      # the open-ended eye, about 1.7 GB
+```
+
+Without it the fast detector still works; you just lose anything outside its 80
+classes.
+
+> Use `moondream` rather than a larger vision model unless you have tested
+> otherwise. `qwen2.5vl:3b` returned a row of `@` characters in under a second
+> for every prompt and every endpoint here, on a frame verified to be a valid
+> JPEG.
+
+### The live view
+
+Click **Camera** in the app for a panel down the left side: live video, a
+coloured box around everything recognised, and the identifications listed above
+the picture. **Full screen** blows it up; Escape closes it.
+
+Each object type gets its own colour, chosen by its position in the detector's
+class list and stepped around the colour wheel by the golden angle — so person
+is always the same red, chair always the same blue, and no two common classes
+land on the same hue.
+
+The video and the detector run at **different rates on purpose**. On a slow
+board the detector cannot keep up with the camera, and tying them together
+stutters the picture rather than lagging the boxes — the worse of the two. So
+frames are shown as fast as the camera gives them and the most recent boxes are
+drawn on top.
 
 ```bash
 pip install -r requirements-vision.txt
 ```
 
-This is the heaviest extra — ultralytics pulls in PyTorch. The detector itself
-is about 6 MB and downloads on first use. **Not worth it on a Pi 4**, where
-detection takes seconds rather than the 18 ms it takes on a desktop.
+This is the heaviest extra — ultralytics pulls in PyTorch.
+
+### The app on a Raspberry Pi 4
+
+Everything in the app runs on a Pi 4, but it sizes itself down without being
+asked:
+
+| | Desktop | Pi 4 |
+| --- | --- | --- |
+| Detector | `yolo11s` | `yolo11n` |
+| Video | 15 fps | 6 fps |
+| Detection | 10 /sec | 1.5 /sec |
+| Speech model | `base.en` | `tiny.en` |
+| Hidden reasoning | on | off |
+
+The window itself needs tkinter, which Raspberry Pi OS does not install by
+default:
+
+```bash
+sudo apt install python3-tk libatlas-base-dev
+```
+
+Then the vision extras, which take a while to build on a Pi:
+
+```bash
+pip install -r requirements-vision.txt --break-system-packages
+```
+
+**Set expectations honestly.** The fast detector manages one or two looks a
+second on a Pi 4, which is enough for a live view with slightly lagging boxes.
+The vision model is a different matter: a single `identify` takes tens of
+seconds there against roughly two on a desktop. It works; it is not something
+you will use casually.
+
+If that is too slow, `JARVIS_OLLAMA_HOST` still points the Pi at a desktop for
+the thinking while the camera and microphone stay local.
 
 The camera is opened for the moment a look takes and released immediately
 after. Nothing holds it open, so the webcam light is not quietly on all day.

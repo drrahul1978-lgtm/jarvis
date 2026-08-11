@@ -61,13 +61,35 @@ HTTP_TIMEOUT = int(os.environ.get("JARVIS_HTTP_TIMEOUT", "20"))
 MAX_PAGE_CHARS = int(os.environ.get("JARVIS_MAX_PAGE_CHARS", "6000"))
 
 # --- Vision --------------------------------------------------------------
-# yolo11n is the small one: about 6 MB, and fast enough to be worth using.
-# Swap for yolo11s or yolo11m if you want accuracy over speed.
-VISION_MODEL = os.environ.get("JARVIS_VISION_MODEL", "yolo11n.pt")
+# Sized to the machine, like the language model. A Pi 4 can only really manage
+# the nano detector, and even then a few frames a second; a desktop has room
+# for the small one, which is noticeably better at partly hidden and distant
+# objects. Override with JARVIS_VISION_MODEL=yolo11m.pt for better still.
+_pi = hardware.is_raspberry_pi()
+VISION_MODEL = os.environ.get(
+    "JARVIS_VISION_MODEL",
+    "yolo11n.pt" if (_pi or hardware.total_ram_gb() < 6) else "yolo11s.pt",
+)
 CAMERA_INDEX = int(os.environ.get("JARVIS_CAMERA", "0"))
-VISION_CONFIDENCE = float(os.environ.get("JARVIS_VISION_CONFIDENCE", "0.45"))
+# A lower bar finds more, at the cost of the occasional confident mistake.
+VISION_CONFIDENCE = float(os.environ.get("JARVIS_VISION_CONFIDENCE", "0.35"))
 # Webcams return dark frames until exposure settles, so throw the first few away.
 CAMERA_WARMUP = int(os.environ.get("JARVIS_CAMERA_WARMUP", "6"))
+
+# The live view shows video at one rate and re-detects at another. On a Pi the
+# detector cannot keep up with the camera, and tying them together would make
+# the picture stutter rather than the boxes lag — the worse of the two.
+CAMERA_FPS = int(os.environ.get("JARVIS_CAMERA_FPS", "6" if _pi else "15"))
+DETECT_FPS = float(os.environ.get("JARVIS_DETECT_FPS", "1.5" if _pi else "10"))
+
+# For anything outside the detector's eighty classes. A vision-capable model
+# has no fixed list, so it can name things the fast detector never could — at
+# seconds per look rather than milliseconds.
+# moondream, not a larger vision model: qwen2.5vl:3b returned a row of "@"
+# characters in under a second for every prompt and every endpoint against
+# Ollama 0.32, on a frame verified to be a valid JPEG. Broken pairings like
+# that are worth pinning away from rather than debugging.
+VISION_LLM = os.environ.get("JARVIS_VISION_LLM", "moondream")
 
 # --- Persona -------------------------------------------------------------
 NAME = os.environ.get("JARVIS_NAME", "Jarvis")

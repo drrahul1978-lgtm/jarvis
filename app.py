@@ -67,6 +67,8 @@ class JarvisApp(tk.Tk):
         self._listening = False
         self.cam_on = False
         self._cam_photo = None
+        self.cam_full = None
+        self._full_photo = None
         self._say_queue: queue.Queue = queue.Queue()
         self._say_buffer = ""
 
@@ -236,11 +238,25 @@ class JarvisApp(tk.Tk):
             wraplength=CAM_W - 28, justify="left", anchor="w")
         self.cam_note.pack(fill="x", padx=14, pady=(0, 12))
 
+        row = tk.Frame(self.cam_panel, bg=SURFACE)
+        row.pack(fill="x", padx=14, pady=(0, 8))
+
+        full = tk.Label(row, text="Full screen", bg=FIELD, fg=DIM,
+                        font=self.f_note, cursor="hand2", pady=7)
+        full.pack(side="left", fill="x", expand=True)
+        full.bind("<Button-1>", lambda e: self.on_camera_fullscreen())
+
         self._ask_about = tk.Label(
             self.cam_panel, text="Ask about what you see", bg=FIELD, fg=DIM,
             font=self.f_note, cursor="hand2", pady=7)
-        self._ask_about.pack(fill="x", padx=14, pady=(0, 14))
+        self._ask_about.pack(fill="x", padx=14, pady=(0, 8))
         self._ask_about.bind("<Button-1>", lambda e: self.on_look())
+
+        identify = tk.Label(
+            self.cam_panel, text="What is that?", bg=FIELD, fg=DIM,
+            font=self.f_note, cursor="hand2", pady=7)
+        identify.pack(fill="x", padx=14, pady=(0, 14))
+        identify.bind("<Button-1>", lambda e: self.on_identify())
 
     def _flat_button(self, parent, text, command):
         b = tk.Label(parent, text=text, bg=BG, fg=DIM, font=self.f_note,
@@ -483,21 +499,53 @@ class JarvisApp(tk.Tk):
 
     def _paint_frame(self, image, names: dict) -> None:
         """Show the latest frame. Runs on the UI thread, where images are legal."""
-        from PIL import ImageTk
+        from PIL import Image, ImageTk
 
         # The reference must be kept: tkinter does not hold one, and a
         # garbage-collected PhotoImage shows up as a blank grey rectangle.
-        self._cam_photo = ImageTk.PhotoImage(image)
+        panel_w = CAM_W - 28
+        small = image.resize(
+            (panel_w, int(image.height * panel_w / image.width)), Image.BILINEAR)
+        self._cam_photo = ImageTk.PhotoImage(small)
         self.cam_view.configure(image=self._cam_photo)
 
+        if self.cam_full is not None:
+            self._paint_fullscreen(image, names)
+
+        ordered = sorted(names.items(), key=lambda kv: -kv[1])
         if names:
-            ordered = sorted(names.items(), key=lambda kv: -kv[1])
-            self.cam_labels.configure(
-                text="  ".join(f"{n} {c:.0%}" for n, c in ordered[:6]),
-                fg=ACCENT)
-            self.cam_note.configure(text="")
+            self._render_labels(self.cam_labels, ordered, 6)
         else:
             self.cam_labels.configure(text="nothing recognised", fg=FAINT)
+
+    def _paint_fullscreen(self, image, names: dict) -> None:
+        from PIL import Image, ImageTk
+
+        screen_w = self.cam_full.winfo_screenwidth()
+        screen_h = self.cam_full.winfo_screenheight() - 110
+        scale = min(screen_w / image.width, screen_h / image.height)
+        big = image.resize(
+            (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+            Image.BILINEAR)
+        self._full_photo = ImageTk.PhotoImage(big)
+        self.full_view.configure(image=self._full_photo)
+
+        ordered = sorted(names.items(), key=lambda kv: -kv[1])
+        self._render_labels(self.full_labels, ordered, 10)
+
+    def _render_labels(self, widget, ordered, limit: int) -> None:
+        """Name what is on screen. One colour per class, matching its box."""
+        from core import vision
+
+        if not ordered:
+            widget.configure(text="nothing recognised", fg=FAINT)
+            return
+        # A single Label cannot colour each word separately, so the text is
+        # plain and the colour shows the most confident class. The boxes
+        # themselves carry the per-object colours.
+        widget.configure(
+            text="   ".join(f"{n} {c:.0%}" for n, c in ordered[:limit]),
+            fg=vision.colour_hex(ordered[0][0]))
 
     def _paint_mic(self, active: bool) -> None:
         self._listening = active
@@ -564,6 +612,13 @@ class JarvisApp(tk.Tk):
             return
         self.ask("What can you see through the camera right now?")
 
+    def on_identify(self) -> None:
+        """Ask the vision model, which has no fixed list of objects."""
+        if self.thinking:
+            return
+        self.ask("Look properly at the camera and tell me what you can see, "
+                 "especially anything unusual.")
+
     def on_camera_toggle(self) -> None:
         if self.cam_on:
             self._stop_camera()
@@ -594,12 +649,22 @@ class JarvisApp(tk.Tk):
         self._cam_photo = None
 
     def _camera_loop(self) -> None:
-        """Grab, detect and annotate off the UI thread."""
+        """Grab, detect and annotate off the UI thread.
+
+        Video and detection run at different rates on purpose. A Pi 4 cannot
+        detect at camera speed, and tying the two together would stutter the
+        picture rather than lag the boxes — the worse of the two failures. So
+        frames are shown as fast as the camera gives them, and the most recent
+        boxes are drawn on top until the detector produces new ones.
+        """
         from PIL import Image
 
+        from core import config as cfg
         from core import vision
 
-        delay = 1.0 / CAM_FPS
+        frame_delay = 1.0 / max(1, cfg.CAMERA_FPS)
+        detect_every = 1.0 / max(0.2, cfg.DETECT_FPS)
+
         stream = vision.Stream()
         try:
             stream.start()
@@ -607,22 +672,25 @@ class JarvisApp(tk.Tk):
             self.events.put(("cam_error", str(exc)))
             return
 
+        found: list = []
+        last_detect = 0.0
+
         try:
             while self.cam_on:
                 started = time.time()
                 try:
-                    frame, found = stream.read()
+                    frame, _ = stream.read(detect=False)
+                    if started - last_detect >= detect_every:
+                        found = vision.detect_boxes(frame)
+                        last_detect = started
+                    painted = vision.annotate(frame, found)
                 except Exception as exc:  # noqa: BLE001
                     self.events.put(("cam_error", str(exc)))
                     break
 
-                # BGR from OpenCV, RGB for everyone else.
-                rgb = frame[:, :, ::-1]
-                image = Image.fromarray(rgb)
-                width = CAM_W - 28
-                image = image.resize(
-                    (width, int(image.height * width / image.width)),
-                    Image.BILINEAR)
+                # BGR from OpenCV, RGB for everyone else. Sent at native size;
+                # the UI thread scales it to whichever view is on screen.
+                image = Image.fromarray(painted[:, :, ::-1])
 
                 names: dict[str, float] = {}
                 for item in found:
@@ -631,11 +699,46 @@ class JarvisApp(tk.Tk):
 
                 self.events.put(("cam_frame", (image, names)))
 
-                remaining = delay - (time.time() - started)
+                remaining = frame_delay - (time.time() - started)
                 if remaining > 0:
                     time.sleep(remaining)
         finally:
             stream.stop()
+
+    def on_camera_fullscreen(self) -> None:
+        """Blow the live view up to fill the screen. Escape or click closes it."""
+        if self.cam_full is not None:
+            self._close_fullscreen()
+            return
+        if not self.cam_on:
+            self.on_camera_toggle()
+
+        top = tk.Toplevel(self)
+        top.title(f"{config.NAME} — camera")
+        top.configure(bg="#000000")
+        top.attributes("-fullscreen", True)
+        top.bind("<Escape>", lambda e: self._close_fullscreen())
+        top.protocol("WM_DELETE_WINDOW", self._close_fullscreen)
+
+        self.full_labels = tk.Label(
+            top, text="", bg="#000000", fg=INK, font=("Segoe UI", 13),
+            pady=10)
+        self.full_labels.pack(side="top", fill="x")
+
+        self.full_view = tk.Label(top, bg="#000000")
+        self.full_view.pack(fill="both", expand=True)
+        self.full_view.bind("<Button-1>", lambda e: self._close_fullscreen())
+
+        tk.Label(top, text="Escape to close", bg="#000000", fg=FAINT,
+                 font=("Segoe UI", 9), pady=8).pack(side="bottom")
+
+        self.cam_full = top
+
+    def _close_fullscreen(self) -> None:
+        if self.cam_full is not None:
+            self.cam_full.destroy()
+            self.cam_full = None
+            self._full_photo = None
 
     # ----------------------------------------------------------- housekeeping
     def on_memory(self) -> None:

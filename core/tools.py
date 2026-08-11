@@ -381,6 +381,28 @@ def _look_for(thing: str, **_):
 
 
 @tool(
+    "identify",
+    "Look properly at what the camera sees, using a vision model with no fixed "
+    "list of objects. Use this when asked what something is, when the fast "
+    "detector found nothing, or when it named something only vaguely. Slower "
+    "than 'look' — seconds, not milliseconds — so prefer 'look' for simple "
+    "questions like whether a person is present.",
+    {
+        "question": {
+            "type": "string",
+            "description": "Optional. What to ask about the image, e.g. 'what "
+                           "is the object on the left?'",
+        }
+    },
+    required=[],
+)
+def _identify(question: str = "", **_):
+    from . import vision
+
+    return _vision_guard(vision.describe, question)
+
+
+@tool(
     "recognisable_objects",
     "List the object types the camera can identify. Use when asked what you are "
     "able to recognise.",
