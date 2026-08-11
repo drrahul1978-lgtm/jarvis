@@ -314,7 +314,9 @@ class JarvisApp(tk.Tk):
                 self._flush_speech()
                 self.write("\n")
                 if self.free_talk:
-                    self.after(400, self._listen_once_free)
+                    # Just long enough for the last sentence to reach the
+                    # speaker queue; any more is dead air between turns.
+                    self.after(80, self._listen_once_free)
             elif kind == "heard":
                 self.entry.delete("1.0", "end")
                 self.ask(payload)
@@ -439,9 +441,11 @@ class JarvisApp(tk.Tk):
         self.events.put(("mic_state", True))
         try:
             self._say_queue.join()          # never record our own voice
-            if free:
-                self.listener.wait_for_sound()
-            audio = self.listener.record()
+            # One open microphone for waiting and recording both, with a
+            # pre-roll so the first syllable is not lost. Free talk decides you
+            # have finished sooner, since its turns are short.
+            audio = self.listener.capture(
+                silence_seconds=(self.listener.FREE_SILENCE if free else 0.0))
             heard = self.listener.transcribe(audio).strip()
         except Exception as exc:  # noqa: BLE001
             self.events.put(("bad", f"Microphone failed: {exc}"))

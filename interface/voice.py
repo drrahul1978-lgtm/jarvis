@@ -280,6 +280,66 @@ class WhisperListener:
     # mid-sentence, short enough not to feel broken.
     SILENCE = float(os.environ.get("JARVIS_SILENCE", "0.6"))
 
+    # Free talk is back-and-forth, and its turns are short, so it can decide
+    # you have finished sooner without chopping sentences in half. This is the
+    # single biggest remaining delay between speaking and being answered.
+    FREE_SILENCE = float(os.environ.get("JARVIS_FREE_SILENCE", "0.45"))
+
+    def capture(self, max_seconds: float = 20.0, silence_seconds: float = 0.0,
+                preroll: float = 0.4, timeout: float = 0.0):
+        """Wait for speech and record it, over a single open microphone.
+
+        This replaces waiting and recording as separate steps, which was both
+        slower and wrong. Slower because each step opened and closed the audio
+        device, and on Windows that is not cheap. Wrong because the audio that
+        triggered detection was then discarded before recording began, so the
+        first syllable of every sentence was clipped — which is most of what
+        made free talk feel unreliable.
+
+        The rolling pre-roll buffer keeps the moment before speech was noticed,
+        so the onset survives. Returns None if `timeout` passes in silence.
+        """
+        from collections import deque
+
+        np, sd = self.np, self.sd
+        silence_seconds = silence_seconds or self.SILENCE
+        step = 0.05
+        block = int(self.rate * step)
+        threshold = float(os.environ.get("JARVIS_MIC_THRESHOLD", "0.012"))
+
+        before = deque(maxlen=max(1, int(preroll / step)))
+        frames: list = []
+        started = False
+        quiet = 0.0
+        deadline = (time.monotonic() + timeout) if timeout else None
+
+        with sd.InputStream(samplerate=self.rate, channels=1, dtype="float32",
+                            blocksize=block, device=self.device) as stream:
+            while True:
+                chunk, _overflow = stream.read(block)
+                level = float(np.sqrt(np.mean(chunk ** 2)))
+
+                if not started:
+                    before.append(chunk.copy())
+                    if level > threshold:
+                        started = True
+                        frames.extend(before)      # keep the onset
+                    elif deadline and time.monotonic() > deadline:
+                        return None
+                    continue
+
+                frames.append(chunk.copy())
+                if level > threshold:
+                    quiet = 0.0
+                else:
+                    quiet += step
+                    if quiet >= silence_seconds:
+                        break
+                if len(frames) * step >= max_seconds:
+                    break
+
+        return np.concatenate(frames, axis=0).flatten() if frames else None
+
     def record(self, max_seconds: float = 20.0, silence_seconds: float = 0.0) -> "any":
         """Capture until the speaker has been quiet for `silence_seconds`."""
         silence_seconds = silence_seconds or self.SILENCE
@@ -550,10 +610,9 @@ class VoiceInterface:
 
         while True:
             try:
-                self.listener.wait_for_sound()
                 # A wake word is one word, so it needs less trailing silence
                 # than a full question does.
-                audio = self.listener.record(max_seconds=8.0, silence_seconds=0.45)
+                audio = self.listener.capture(max_seconds=8.0, silence_seconds=0.45)
                 heard = self.listener.transcribe(audio)
             except KeyboardInterrupt:
                 return ""
@@ -603,8 +662,8 @@ class VoiceInterface:
 
         while True:
             try:
-                self.listener.wait_for_sound()
-                audio = self.listener.record()
+                audio = self.listener.capture(
+                    silence_seconds=self.listener.FREE_SILENCE)
                 heard = self.listener.transcribe(audio).strip()
             except KeyboardInterrupt:
                 return ""
@@ -625,9 +684,9 @@ class VoiceInterface:
         """
         self.ui.status("Listening...")
         try:
-            if not self.listener.wait_for_sound(timeout=window):
+            audio = self.listener.capture(timeout=window)
+            if audio is None:
                 return ""
-            audio = self.listener.record()
             return self.listener.transcribe(audio).strip()
         except KeyboardInterrupt:
             return ""
