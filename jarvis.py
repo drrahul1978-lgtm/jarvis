@@ -322,10 +322,18 @@ class Jarvis:
 
         if word in ("off", "no", "stop", "disable"):
             self.ui.wake = ""
+            self.ui.free = False
             self.ui.status("Hands-free off. Press Enter to talk.")
             return
 
+        if word in ("free", "talk", "always"):
+            self.ui.free = True
+            self.ui.wake = ""
+            self.ui.status("Free talk on. No wake word — just speak.")
+            return
+
         if word in ("on", "yes", "enable"):
+            self.ui.free = False
             word = config.NAME.lower()
 
         if len(word.split()) > 1:
@@ -470,6 +478,10 @@ def main() -> int:
         metavar="WORD",
         help=f"Hands-free: wait for a wake word (default '{config.NAME.lower()}').",
     )
+    parser.add_argument(
+        "--free", action="store_true",
+        help="Free talk: no wake word, no key. Just speak.",
+    )
     parser.add_argument("--tts-voice", default="", help="Name of the system voice to use.")
     args = parser.parse_args()
 
@@ -501,12 +513,13 @@ def main() -> int:
 
     # Voice is offered rather than assumed: asked once at startup, unless a
     # flag already settles it or there is nobody at the keyboard to answer.
-    want_voice = args.voice or bool(args.wake)
+    want_voice = args.voice or bool(args.wake) or args.free
     if not want_voice and not args.no_voice and not args.once and sys.stdin.isatty():
         want_voice = ask_yes_no(console, "Use voice? Jarvis will speak its answers")
 
     wake = args.wake
-    if want_voice and not wake and not args.no_mic and sys.stdin.isatty():
+    if want_voice and not wake and not args.free and not args.no_mic \
+            and sys.stdin.isatty():
         # Defaults to yes: pressing Enter before every sentence is the thing
         # that stops voice mode feeling like conversation.
         if ask_yes_no(
@@ -521,7 +534,8 @@ def main() -> int:
 
         console.status("Starting voice (first run loads a speech model)...")
         voice = VoiceInterface(
-            console, listen=not args.no_mic, voice=args.tts_voice, wake=wake
+            console, listen=not args.no_mic, voice=args.tts_voice, wake=wake,
+            free=args.free,
         )
         ui = voice
         ui.status(voice.describe())

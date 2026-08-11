@@ -397,6 +397,35 @@ def detect_wake(text: str, word: str = "jarvis", threshold: float = 0.72):
     return False, ""
 
 
+# Whisper invents these from silence, room tone and door clicks. They are the
+# stock phrases of its training data, and in free-talk mode — where nothing is
+# gating the microphone — they would have Jarvis answering an empty room.
+_HALLUCINATIONS = {
+    "you", "thank you", "thanks", "thank you.", "thanks for watching",
+    "thanks for watching!", "bye", "bye.", "okay", "ok", "oh", "um", "uh",
+    "mm", "hmm", "yeah", "so", "the", "and", "a", ".", "!", "?",
+    "[blank_audio]", "[silence]", "(silence)", "[music]", "(upbeat music)",
+    "subtitles by the amara.org community", "please subscribe",
+}
+
+
+def is_noise(text: str) -> bool:
+    """Is this a real utterance, or the recogniser talking to itself?"""
+    cleaned = text.strip().lower().strip(".!?,")
+    if len(cleaned) < 2:
+        return True
+    if cleaned in _HALLUCINATIONS:
+        return True
+    # A lone word that is pure filler is far more likely noise than a question.
+    words = cleaned.split()
+    if len(words) == 1 and cleaned in _HALLUCINATIONS:
+        return True
+    # Whisper repeats itself when fed silence: "you you you you".
+    if len(words) > 3 and len(set(words)) == 1:
+        return True
+    return False
+
+
 def _is_small_machine() -> bool:
     from core import hardware
 
@@ -410,13 +439,15 @@ class VoiceInterface:
     """Speaks answers aloud; listens if it can, reads typed input if it cannot."""
 
     def __init__(self, ui, speak_status: bool = False, listen: bool = True,
-                 voice: str = "", rate: int = 1, wake: str = ""):
+                 voice: str = "", rate: int = 1, wake: str = "",
+                 free: bool = False):
         self.ui = ui                      # console, for the visible transcript
         self.speaker = pick_speaker(voice=voice, rate=rate)
         self.speak_status = speak_status
         self.listener = None
         self.listen_error = ""
         self.wake = wake.strip().lower()
+        self.free = bool(free)
 
         if listen:
             try:
@@ -474,6 +505,8 @@ class VoiceInterface:
     def listen(self) -> str:
         if not self.listener:
             return self.ui.listen()
+        if self.free:
+            return self.listen_freely()
         if self.wake:
             return self.listen_for_wake()
 
@@ -559,6 +592,32 @@ class VoiceInterface:
             self.ui.say_user(question)
             return question
 
+    def listen_freely(self) -> str:
+        """No wake word, no key: just talk, and it answers.
+
+        The trade is that nothing is gating the microphone, so every noise in
+        the room is transcribed and has to be judged. Ctrl-C leaves.
+        """
+        self.wait_until_quiet()          # never hear our own voice
+        self.ui.status("Listening — just talk. Ctrl-C to stop.")
+
+        while True:
+            try:
+                self.listener.wait_for_sound()
+                audio = self.listener.record()
+                heard = self.listener.transcribe(audio).strip()
+            except KeyboardInterrupt:
+                return ""
+            except Exception as exc:  # noqa: BLE001
+                self.ui.status(f"Microphone failed: {exc}", "warn")
+                return ""
+
+            if not heard or is_noise(heard):
+                continue                  # a cough, a door, or an invention
+
+            self.ui.say_user(heard)
+            return heard
+
     def _catch_reply(self, window: float) -> str:
         """Listen for a short while without needing the wake word.
 
@@ -628,6 +687,8 @@ class VoiceInterface:
     def describe(self) -> str:
         if not self.listener:
             listening = "typed input"
+        elif self.free:
+            listening = f"free talk, no wake word ({self.listener.size})"
         elif self.wake:
             listening = f'hands-free, wake word "{self.wake}" ({self.listener.size})'
         else:

@@ -341,6 +341,58 @@ def _speaker_stop(speaker: str, **_):
     return _cast_guard(cast.stop, speaker)
 
 
+# --- seeing ---------------------------------------------------------------
+
+
+def _vision_guard(fn, *args, **kwargs):
+    from . import vision
+
+    try:
+        return fn(*args, **kwargs)
+    except (vision.VisionUnavailable, vision.VisionError) as exc:
+        return str(exc)
+    except Exception as exc:  # noqa: BLE001
+        return f"Camera problem: {type(exc).__name__}: {exc}"
+
+
+@tool(
+    "look",
+    "Look through the camera and describe what is visible. Use when asked what "
+    "you can see, who is there, or what is in the room.",
+    {},
+    required=[],
+)
+def _look(**_):
+    from . import vision
+
+    return _vision_guard(vision.look)
+
+
+@tool(
+    "look_for",
+    "Check whether a particular object is visible right now, e.g. a person, a "
+    "phone, a keyboard, a remote.",
+    {"thing": {"type": "string", "description": "The object to look for."}},
+)
+def _look_for(thing: str, **_):
+    from . import vision
+
+    return _vision_guard(vision.find, thing)
+
+
+@tool(
+    "recognisable_objects",
+    "List the object types the camera can identify. Use when asked what you are "
+    "able to recognise.",
+    {},
+    required=[],
+)
+def _recognisable(**_):
+    from . import vision
+
+    return _vision_guard(vision.known_objects)
+
+
 # --- registry access -----------------------------------------------------
 
 

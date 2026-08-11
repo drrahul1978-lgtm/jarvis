@@ -1,0 +1,14 @@
+# Optional — only needed for the camera (`look`, `look_for`).
+#
+#   pip install -r requirements-vision.txt
+#
+# This is the heaviest optional extra: ultralytics pulls in PyTorch, so expect
+# a few hundred megabytes. The detector itself is tiny (about 6 MB) and is
+# downloaded on first use.
+#
+# Not recommended on a Raspberry Pi 4 — detection there takes seconds per frame
+# rather than milliseconds, and the download alone is a strain. A Pi 5 manages,
+# slowly.
+
+ultralytics>=8.3.0
+opencv-python>=4.9.0

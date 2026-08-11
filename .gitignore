@@ -18,3 +18,7 @@ env/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Downloaded on first use by ultralytics.
+*.pt
+

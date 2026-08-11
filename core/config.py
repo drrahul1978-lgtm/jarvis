@@ -60,6 +60,15 @@ USER_AGENT = (
 HTTP_TIMEOUT = int(os.environ.get("JARVIS_HTTP_TIMEOUT", "20"))
 MAX_PAGE_CHARS = int(os.environ.get("JARVIS_MAX_PAGE_CHARS", "6000"))
 
+# --- Vision --------------------------------------------------------------
+# yolo11n is the small one: about 6 MB, and fast enough to be worth using.
+# Swap for yolo11s or yolo11m if you want accuracy over speed.
+VISION_MODEL = os.environ.get("JARVIS_VISION_MODEL", "yolo11n.pt")
+CAMERA_INDEX = int(os.environ.get("JARVIS_CAMERA", "0"))
+VISION_CONFIDENCE = float(os.environ.get("JARVIS_VISION_CONFIDENCE", "0.45"))
+# Webcams return dark frames until exposure settles, so throw the first few away.
+CAMERA_WARMUP = int(os.environ.get("JARVIS_CAMERA_WARMUP", "6"))
+
 # --- Persona -------------------------------------------------------------
 NAME = os.environ.get("JARVIS_NAME", "Jarvis")
 USER_TITLE = os.environ.get("JARVIS_USER_TITLE", "sir")

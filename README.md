@@ -387,6 +387,70 @@ genuinely bad thing to own.
 reaches Home Assistant, which controls your devices. Google does not permit
 third parties to replace the assistant on their hardware.
 
+## The desktop app
+
+```bash
+python app.py
+```
+
+Or double-click **Jarvis App.bat**, which starts Ollama first if it is not
+already running. A window with the conversation, a **Look** button that points
+the camera at whatever is in front of it, and **Memory** to see what it knows
+about you.
+
+Built on tkinter, which ships with Python, so the window itself adds no
+dependencies. The model runs on a worker thread, so the app keeps painting
+while it thinks.
+
+## Seeing
+
+```
+you > what can you see?
+jarvis > I can see a person and a bed.
+you > is my phone on the desk?
+```
+
+Object recognition runs locally with YOLO — no image leaves the machine, which
+matters for a camera pointed at your home. It knows 80 everyday object types:
+people, phones, keyboards, laptops, remotes, cups, chairs, books and so on. It
+cannot recognise arbitrary things, and says so rather than guessing.
+
+```bash
+pip install -r requirements-vision.txt
+```
+
+This is the heaviest extra — ultralytics pulls in PyTorch. The detector itself
+is about 6 MB and downloads on first use. **Not worth it on a Pi 4**, where
+detection takes seconds rather than the 18 ms it takes on a desktop.
+
+The camera is opened for the moment a look takes and released immediately
+after. Nothing holds it open, so the webcam light is not quietly on all day.
+Frames are reused for a second and a half, so two questions asked moments apart
+agree about what is in the room.
+
+| Setting | Effect |
+| --- | --- |
+| `JARVIS_CAMERA` | which camera, if you have several (default 0) |
+| `JARVIS_VISION_MODEL` | `yolo11s.pt` or `yolo11m.pt` for accuracy over speed |
+| `JARVIS_VISION_CONFIDENCE` | how sure it must be, default 0.45 |
+
+## Free talk
+
+No wake word, no key. Just speak.
+
+```bash
+python jarvis.py --free
+```
+
+Or `/wake free` mid-session, and `/wake off` to stop.
+
+The trade is real and worth understanding: nothing is gating the microphone, so
+every sound in the room gets transcribed and judged. Speech recognisers also
+invent text from silence — "you", "Thank you", "Thanks for watching" are its
+stock phrases — so those are filtered out, along with repeated single words.
+Even so, free talk in a room with a television will pick things up. The wake
+word exists for a reason; free talk is for when you are alone with it.
+
 ## Speaking through the house
 
 ### Google Home, Nest and Chromecast speakers
