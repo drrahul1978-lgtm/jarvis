@@ -346,26 +346,48 @@ instructions rather than a flat denial that it can.
 matching, and error handling are verified; nobody has yet pointed it at an
 actual Home Assistant. Expect one or two rough edges on first contact.
 
-## Smart devices without a hub
+### Linking Home Assistant to Google Home and Alexa
 
-Home Assistant exists because every manufacturer speaks its own protocol.
-Without it, each brand needs its own integration. Two are built in.
+This is worth understanding before you start, because it is not something Jarvis
+does — it is configuration inside Home Assistant, and it is the one part of this
+whole project that genuinely needs the cloud.
 
-### Govee lights
+Once linked, everything works both ways: "Hey Google, turn on the lamp" reaches
+Home Assistant, and Jarvis reaches the same devices directly over your network.
+The two do not conflict.
 
-Many Govee devices accept control directly over the local network — no account,
-no API key, no internet.
+**The easy way — Home Assistant Cloud (Nabu Casa).** Around $6.50 a month, from
+the people who make Home Assistant. Settings → Home Assistant Cloud, sign in,
+toggle Google Assistant and Alexa. It handles the public endpoint, the OAuth and
+the account linking. Ten minutes, no cloud consoles, and it funds the project.
 
-```
-you > turn the govee strip on
-you > set the strip to warm white
-you > dim it to 20%
-```
+**The free way — considerably more work.** Both platforms require your Home
+Assistant to be reachable from the internet over HTTPS with a valid certificate,
+which means a domain name and either port forwarding or a tunnel.
 
-**LAN control is off by default.** Open the Govee Home app, go into each
-device's settings, and switch on *LAN Control*. Some older models do not support
-it and need the cloud API instead. If nothing responds, that setting is almost
-always the reason.
+- *Google Home* additionally needs a Google Cloud project, an Actions on Google
+  smart home project, a service account key, and manual account linking. Google
+  also expires test deployments periodically, so it needs occasional
+  re-publishing.
+- *Alexa* additionally needs an Amazon Developer account, a Smart Home skill, and
+  an AWS Lambda function to route requests, plus Login with Amazon for linking.
+
+Home Assistant's own guides are the authority on both, and they change often
+enough that it is worth reading them rather than any summary:
+[google_assistant](https://www.home-assistant.io/integrations/google_assistant/)
+and [alexa.smart_home](https://www.home-assistant.io/integrations/alexa.smart_home/).
+
+**A word of caution on the free route.** It means exposing your home automation
+to the public internet. If you do it, use a proper certificate, a strong
+password, two-factor authentication, and consider Cloudflare Tunnel rather than
+forwarding a port. A misconfigured Home Assistant on the open internet is a
+genuinely bad thing to own.
+
+**What none of this changes:** "Hey Google" still will not reach *Jarvis*. It
+reaches Home Assistant, which controls your devices. Google does not permit
+third parties to replace the assistant on their hardware.
+
+## Speaking through the house
 
 ### Google Home, Nest and Chromecast speakers
 
