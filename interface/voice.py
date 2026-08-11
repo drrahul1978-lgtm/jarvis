@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from core import config
@@ -311,8 +312,8 @@ class WhisperListener:
         )
         return " ".join(s.text.strip() for s in segments).strip()
 
-    def wait_for_sound(self, poll: float = 0.05) -> None:
-        """Block until someone starts talking.
+    def wait_for_sound(self, poll: float = 0.05, timeout: float = 0.0) -> bool:
+        """Block until someone starts talking. False if `timeout` passed first.
 
         Transcribing continuously would peg a CPU core for nothing — on a Pi it
         would cook the board. Instead this watches the microphone's energy
@@ -322,13 +323,16 @@ class WhisperListener:
         np, sd = self.np, self.sd
         block = int(self.rate * poll)
         threshold = float(os.environ.get("JARVIS_MIC_THRESHOLD", "0.012"))
+        deadline = (time.monotonic() + timeout) if timeout else None
 
         with sd.InputStream(samplerate=self.rate, channels=1, dtype="float32",
                             blocksize=block, device=self.device) as stream:
             while True:
                 chunk, _overflow = stream.read(block)
                 if float(np.sqrt(np.mean(chunk ** 2))) > threshold:
-                    return
+                    return True
+                if deadline and time.monotonic() > deadline:
+                    return False
 
     def chirp(self, rising: bool = True) -> None:
         """A short tone, so you know it heard you without it saying anything."""
@@ -425,13 +429,41 @@ class VoiceInterface:
         self._worker = threading.Thread(target=self._drain, daemon=True)
         self._worker.start()
 
+        # After answering, keep listening this long for a follow-up before
+        # requiring the wake word again — so a conversation stays a
+        # conversation instead of a series of announcements.
+        self.follow_up = float(os.environ.get("JARVIS_FOLLOW_UP", "7.0"))
+        self._just_answered = False
+
+        # The recogniser is slow on its very first phrase and instant after.
+        # Paying that once at startup keeps it out of the first real question.
+        if self.listener:
+            try:
+                self.listener.transcribe(self.listener.np.zeros(16000, dtype="float32"))
+            except Exception:  # noqa: BLE001
+                pass
+
     # -- speech queue: keeps sentences in order without blocking the model --
     def _drain(self) -> None:
         while True:
             text = self._queue.get()
             if text is None:
+                self._queue.task_done()
                 return
-            self.speaker.speak(text)
+            try:
+                self.speaker.speak(text)
+            finally:
+                # Marked done either way, so wait_until_quiet can never hang on
+                # a sentence that failed to synthesise.
+                self._queue.task_done()
+
+    def wait_until_quiet(self) -> None:
+        """Block until everything queued has actually been spoken.
+
+        Essential before opening the microphone again: without it Jarvis
+        records its own voice and answers itself.
+        """
+        self._queue.join()
 
     def _enqueue(self, text: str) -> None:
         text = speakable(text)
@@ -471,6 +503,16 @@ class VoiceInterface:
         Ctrl-C leaves the loop, which is the only way out — there is no keyboard
         prompt to fall back to while the microphone has the floor.
         """
+        # Straight after an answer, take a follow-up without the wake word.
+        # This is what makes it feel like talking rather than dispatching.
+        if self._just_answered and self.follow_up > 0:
+            self._just_answered = False
+            self.wait_until_quiet()      # never record our own voice
+            question = self._catch_reply(self.follow_up)
+            if question:
+                return question
+            self.ui.status(f'Say "{self.wake}" when you need me.')
+
         self.ui.status(f'Waiting for "{self.wake}". Ctrl-C to stop.')
 
         while True:
@@ -517,6 +559,23 @@ class VoiceInterface:
             self.ui.say_user(question)
             return question
 
+    def _catch_reply(self, window: float) -> str:
+        """Listen for a short while without needing the wake word.
+
+        Returns "" if the window passes quietly, which sends us back to sleep.
+        """
+        self.ui.status("Listening...")
+        try:
+            if not self.listener.wait_for_sound(timeout=window):
+                return ""
+            audio = self.listener.record()
+            return self.listener.transcribe(audio).strip()
+        except KeyboardInterrupt:
+            return ""
+        except Exception as exc:  # noqa: BLE001
+            self.ui.status(f"Microphone failed: {exc}", "warn")
+            return ""
+
     def stream(self, fragment: str) -> None:
         """Show every token, but speak only whole sentences."""
         self.ui.stream(fragment)
@@ -537,6 +596,9 @@ class VoiceInterface:
             self._enqueue(self._buffer)
             self._buffer = ""
         self.ui.end_stream()
+        # An answer just finished, so the next listen should stay open for a
+        # follow-up rather than demanding the wake word again.
+        self._just_answered = True
 
     def say(self, text: str) -> None:
         self.ui.say(text)

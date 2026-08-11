@@ -421,7 +421,13 @@ def main() -> int:
 
     wake = args.wake
     if want_voice and not wake and not args.no_mic and sys.stdin.isatty():
-        if ask_yes_no(console, f'Hands-free? Say "{config.NAME}" to get its attention'):
+        # Defaults to yes: pressing Enter before every sentence is the thing
+        # that stops voice mode feeling like conversation.
+        if ask_yes_no(
+            console,
+            f'Hands-free? Say "{config.NAME}" once, then just talk',
+            default=True,
+        ):
             wake = config.NAME.lower()
 
     if want_voice:

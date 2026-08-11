@@ -242,6 +242,32 @@ you: "what's the weather"
 Say it with the question attached and it skips the second step — "Jarvis, what
 time is it" is answered immediately rather than making you repeat yourself.
 
+**It stays listening after it answers.** For about seven seconds you can simply
+carry on — "and what about tomorrow" — with no wake word and no key to press.
+Only when that window passes quietly does it go back to sleep. This is the
+difference between a conversation and a series of announcements, so it is on by
+default; `JARVIS_FOLLOW_UP=0` turns it off, or set it longer.
+
+It waits for its own voice to finish before opening the microphone, so it never
+hears itself and answers its own question.
+
+### Why it feels slow, and what actually helps
+
+Measured on a desktop, one exchange costs:
+
+| Step | Time |
+| --- | --- |
+| Transcribing what you said | 0.14–0.22 s |
+| Synthesising the reply | 0.08 s (about 50× faster than real time) |
+| Waiting for you to stop talking | 0.6 s |
+| The model composing an answer | everything else |
+
+None of the speech parts are slow. If it feels sluggish, it is the pause
+before it decides you have finished, or the model itself. The pause is
+`JARVIS_SILENCE` — drop it to `0.4` for snappier turns, raise it if it cuts you
+off mid-sentence. The speech recogniser is also warmed up at startup, so the
+first question is no slower than the rest.
+
 Toggle it mid-session:
 
 | Command | Effect |
