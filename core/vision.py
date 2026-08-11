@@ -144,6 +144,109 @@ def detect(frame=None, threshold: float | None = None) -> list[dict]:
     return found
 
 
+def detect_boxes(frame, threshold: float | None = None) -> list[dict]:
+    """Like detect, but keeps where each thing is so it can be drawn."""
+    model = _load()
+    threshold = config.VISION_CONFIDENCE if threshold is None else threshold
+    try:
+        result = model(frame, verbose=False)[0]
+    except Exception as exc:  # noqa: BLE001
+        raise VisionError(f"Detection failed: {exc}") from exc
+
+    found = []
+    for box in result.boxes:
+        confidence = float(box.conf[0])
+        if confidence < threshold:
+            continue
+        x1, y1, x2, y2 = (int(v) for v in box.xyxy[0].tolist())
+        found.append({
+            "name": model.names[int(box.cls[0])],
+            "confidence": confidence,
+            "box": (x1, y1, x2, y2),
+        })
+    found.sort(key=lambda item: -item["confidence"])
+    return found
+
+
+# The app's accent, in the order OpenCV wants it.
+_BOX_BGR = (92, 164, 200)
+_TEXT_BGR = (26, 26, 26)
+
+
+def annotate(frame, found: list[dict]):
+    """Draw a labelled box around everything found. Modifies a copy."""
+    import cv2
+
+    canvas = frame.copy()
+    for item in found:
+        x1, y1, x2, y2 = item["box"]
+        cv2.rectangle(canvas, (x1, y1), (x2, y2), _BOX_BGR, 2)
+
+        label = f"{item['name']} {item['confidence']:.0%}"
+        (width, height), _ = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+
+        # Keep the caption on screen when the box touches the top edge.
+        top = max(y1, height + 8)
+        cv2.rectangle(canvas, (x1, top - height - 8), (x1 + width + 8, top),
+                      _BOX_BGR, -1)
+        cv2.putText(canvas, label, (x1 + 4, top - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, _TEXT_BGR, 1, cv2.LINE_AA)
+    return canvas
+
+
+class Stream:
+    """A camera held open for a live view, rather than one frame at a time.
+
+    The one-shot `look` opens and closes the device each time, which is right
+    for an occasional question and hopeless at fifteen frames a second. This
+    keeps it open for as long as the view is on screen, and closes it the
+    moment it is not — a camera should not stay open because a panel was left
+    hidden behind a window.
+    """
+
+    def __init__(self, index: int | None = None):
+        self.index = index
+        self.camera = None
+
+    def start(self) -> None:
+        if self.camera is not None:
+            return
+        self.camera = _open_camera(self.index)
+        for _ in range(config.CAMERA_WARMUP):
+            self.camera.read()
+            time.sleep(0.02)
+
+    def read(self, detect: bool = True):
+        """Return (annotated_frame, detections). Raises if the camera stops."""
+        if self.camera is None:
+            self.start()
+        ok, frame = self.camera.read()
+        if not ok or frame is None:
+            raise VisionError("The camera stopped sending frames.")
+
+        if not detect:
+            return frame, []
+        found = detect_boxes(frame)
+        for item in found:
+            _last_seen[item["name"]] = time.time()
+        return annotate(frame, found), found
+
+    def stop(self) -> None:
+        if self.camera is not None:
+            try:
+                self.camera.release()
+            finally:
+                self.camera = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *_exc):
+        self.stop()
+
+
 def _phrase(counts: dict[str, int]) -> str:
     """Turn {'person': 2, 'keyboard': 1} into 'two people and a keyboard'."""
     words = {1: "a", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six"}

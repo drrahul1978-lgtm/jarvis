@@ -15,6 +15,7 @@ import os
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import font as tkfont
@@ -38,6 +39,8 @@ ACCENT = "#c8a45c"
 ALERT = "#d97757"
 
 COLUMN = 720            # readable measure; the conversation stays this wide
+CAM_W = 340             # width of the live camera panel
+CAM_FPS = 12            # detection is cheap, but not free; this looks smooth
 
 
 class JarvisApp(tk.Tk):
@@ -62,6 +65,8 @@ class JarvisApp(tk.Tk):
         self.speak_replies = tk.BooleanVar(value=False)
         self.free_talk = False
         self._listening = False
+        self.cam_on = False
+        self._cam_photo = None
         self._say_queue: queue.Queue = queue.Queue()
         self._say_buffer = ""
 
@@ -102,6 +107,13 @@ class JarvisApp(tk.Tk):
 
         self._flat_button(head, "Clear", self.on_clear).pack(side="right", padx=(0, 16))
         self._flat_button(head, "Memory", self.on_memory).pack(side="right", padx=6)
+        self.b_cam_toggle = self._flat_button(head, "Camera", self.on_camera_toggle)
+        self.b_cam_toggle.pack(side="right", padx=6)
+        # The shared hover handler resets to DIM on leave, which would wipe the
+        # accent that shows the camera is live. This one remembers.
+        self.b_cam_toggle.bind(
+            "<Leave>",
+            lambda e: self.b_cam_toggle.configure(fg=ACCENT if self.cam_on else DIM))
 
         tk.Frame(self, bg=LINE, height=1).pack(fill="x")
 
@@ -110,10 +122,12 @@ class JarvisApp(tk.Tk):
         # first claims every remaining pixel and squeezes later ones off the
         # window entirely — which is exactly what it did.
         self._build_composer()
+        self._build_camera_panel()
 
         # -- conversation
         wrap = tk.Frame(self, bg=BG)
         wrap.pack(fill="both", expand=True)
+        self.wrap = wrap
 
         self.view = tk.Text(
             wrap, bg=BG, fg=INK, font=self.f_body, wrap="word", relief="flat",
@@ -190,6 +204,43 @@ class JarvisApp(tk.Tk):
 
         self.hint = tk.Label(row, text="", bg=BG, fg=FAINT, font=self.f_note)
         self.hint.pack(side="right")
+
+    def _build_camera_panel(self) -> None:
+        """A collapsible live view down the left-hand side."""
+        self.cam_panel = tk.Frame(self, bg=SURFACE, width=CAM_W)
+        # Deliberately not packed yet: it appears only when switched on.
+        self.cam_panel.pack_propagate(False)
+
+        header = tk.Frame(self.cam_panel, bg=SURFACE)
+        header.pack(fill="x", padx=14, pady=(14, 6))
+
+        tk.Label(header, text="Camera", bg=SURFACE, fg=INK,
+                 font=("Segoe UI Semibold", 10)).pack(side="left")
+        close = tk.Label(header, text="✕", bg=SURFACE, fg=FAINT,
+                         font=("Segoe UI", 10), cursor="hand2")
+        close.pack(side="right")
+        close.bind("<Button-1>", lambda e: self.on_camera_toggle())
+
+        # What is on screen, named. Sits above the picture, as asked.
+        self.cam_labels = tk.Label(
+            self.cam_panel, text="starting…", bg=SURFACE, fg=ACCENT,
+            font=("Segoe UI", 9), wraplength=CAM_W - 28, justify="left",
+            anchor="w")
+        self.cam_labels.pack(fill="x", padx=14, pady=(0, 8))
+
+        self.cam_view = tk.Label(self.cam_panel, bg="#111111", anchor="center")
+        self.cam_view.pack(padx=14, pady=(0, 10))
+
+        self.cam_note = tk.Label(
+            self.cam_panel, text="", bg=SURFACE, fg=FAINT, font=("Segoe UI", 8),
+            wraplength=CAM_W - 28, justify="left", anchor="w")
+        self.cam_note.pack(fill="x", padx=14, pady=(0, 12))
+
+        self._ask_about = tk.Label(
+            self.cam_panel, text="Ask about what you see", bg=FIELD, fg=DIM,
+            font=self.f_note, cursor="hand2", pady=7)
+        self._ask_about.pack(fill="x", padx=14, pady=(0, 14))
+        self._ask_about.bind("<Button-1>", lambda e: self.on_look())
 
     def _flat_button(self, parent, text, command):
         b = tk.Label(parent, text=text, bg=BG, fg=DIM, font=self.f_note,
@@ -326,6 +377,13 @@ class JarvisApp(tk.Tk):
                 self.write(f"{payload}\n", "note")
             elif kind == "bad":
                 self.write(f"{payload}\n", "bad")
+            elif kind == "cam_frame":
+                self._paint_frame(*payload)
+            elif kind == "cam_error":
+                self.cam_labels.configure(text="camera unavailable", fg=ALERT)
+                self.cam_note.configure(text=payload)
+                self.cam_on = False
+                self.b_cam_toggle.configure(fg=DIM)
 
         self.after(50, self._pump)
 
@@ -423,6 +481,24 @@ class JarvisApp(tk.Tk):
                 return
             self.write(f"Speaking replies with {self.speaker.name}.\n", "note")
 
+    def _paint_frame(self, image, names: dict) -> None:
+        """Show the latest frame. Runs on the UI thread, where images are legal."""
+        from PIL import ImageTk
+
+        # The reference must be kept: tkinter does not hold one, and a
+        # garbage-collected PhotoImage shows up as a blank grey rectangle.
+        self._cam_photo = ImageTk.PhotoImage(image)
+        self.cam_view.configure(image=self._cam_photo)
+
+        if names:
+            ordered = sorted(names.items(), key=lambda kv: -kv[1])
+            self.cam_labels.configure(
+                text="  ".join(f"{n} {c:.0%}" for n, c in ordered[:6]),
+                fg=ACCENT)
+            self.cam_note.configure(text="")
+        else:
+            self.cam_labels.configure(text="nothing recognised", fg=FAINT)
+
     def _paint_mic(self, active: bool) -> None:
         self._listening = active
         self.b_mic.configure(fg=ACCENT if active else DIM,
@@ -488,6 +564,79 @@ class JarvisApp(tk.Tk):
             return
         self.ask("What can you see through the camera right now?")
 
+    def on_camera_toggle(self) -> None:
+        if self.cam_on:
+            self._stop_camera()
+            return
+
+        try:
+            from core import vision  # noqa: F401
+            from PIL import Image, ImageTk  # noqa: F401
+        except ImportError:
+            self.write(
+                "The camera needs the vision extras. Install them with:  "
+                "pip install -r requirements-vision.txt\n", "bad")
+            return
+
+        self.cam_on = True
+        self.b_cam_toggle.configure(fg=ACCENT)
+        self.cam_labels.configure(text="starting…")
+        self.cam_note.configure(text="")
+        # Packed before the conversation so it takes its space from the side
+        # rather than being squeezed out by an expanding neighbour.
+        self.cam_panel.pack(side="left", fill="y", before=self.wrap)
+        threading.Thread(target=self._camera_loop, daemon=True).start()
+
+    def _stop_camera(self) -> None:
+        self.cam_on = False
+        self.b_cam_toggle.configure(fg=DIM)
+        self.cam_panel.pack_forget()
+        self._cam_photo = None
+
+    def _camera_loop(self) -> None:
+        """Grab, detect and annotate off the UI thread."""
+        from PIL import Image
+
+        from core import vision
+
+        delay = 1.0 / CAM_FPS
+        stream = vision.Stream()
+        try:
+            stream.start()
+        except Exception as exc:  # noqa: BLE001
+            self.events.put(("cam_error", str(exc)))
+            return
+
+        try:
+            while self.cam_on:
+                started = time.time()
+                try:
+                    frame, found = stream.read()
+                except Exception as exc:  # noqa: BLE001
+                    self.events.put(("cam_error", str(exc)))
+                    break
+
+                # BGR from OpenCV, RGB for everyone else.
+                rgb = frame[:, :, ::-1]
+                image = Image.fromarray(rgb)
+                width = CAM_W - 28
+                image = image.resize(
+                    (width, int(image.height * width / image.width)),
+                    Image.BILINEAR)
+
+                names: dict[str, float] = {}
+                for item in found:
+                    name = item["name"]
+                    names[name] = max(names.get(name, 0), item["confidence"])
+
+                self.events.put(("cam_frame", (image, names)))
+
+                remaining = delay - (time.time() - started)
+                if remaining > 0:
+                    time.sleep(remaining)
+        finally:
+            stream.stop()
+
     # ----------------------------------------------------------- housekeeping
     def on_memory(self) -> None:
         facts = self.memory.all_facts(limit=100)
@@ -507,6 +656,7 @@ class JarvisApp(tk.Tk):
 
     def destroy(self) -> None:
         self.free_talk = False
+        self.cam_on = False          # lets the capture thread release the camera
         try:
             self._say_queue.put(None)
             if self.speaker:
