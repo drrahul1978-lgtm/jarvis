@@ -31,6 +31,9 @@ class Brain:
     def __init__(self, model: str | None = None, host: str | None = None):
         self.model = model or config.MODEL
         self.host = (host or config.OLLAMA_HOST).rstrip("/")
+        # Only reasoning models accept a `think` field; the rest reject the
+        # request outright. Dropped permanently the first time one complains.
+        self.supports_think = True
 
     # -- server checks ----------------------------------------------------
     def _request(self, path: str, payload: dict | None = None, stream: bool = False):
@@ -146,11 +149,23 @@ class Brain:
             "options": {
                 "temperature": config.TEMPERATURE,
                 "num_ctx": config.CONTEXT_TOKENS,
+                "num_predict": config.MAX_TOKENS,
             },
         }
+        if self.supports_think:
+            payload["think"] = config.THINK
 
         try:
             resp = self._request("/api/chat", payload, stream=True)
+        except urllib.error.HTTPError as exc:
+            # A model with no reasoning mode rejects the field. Forget it and
+            # retry once, rather than failing the turn over a tuning hint.
+            if self.supports_think and exc.code == 400:
+                self.supports_think = False
+                payload.pop("think", None)
+                resp = self._request("/api/chat", payload, stream=True)
+            else:
+                raise
         except urllib.error.URLError as exc:
             raise BrainOffline(
                 f"Cannot reach Ollama at {self.host} ({exc.reason}). "

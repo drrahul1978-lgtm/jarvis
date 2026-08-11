@@ -30,6 +30,19 @@ CONTEXT_TOKENS = int(
 # How many tool round-trips Jarvis may take before it must answer.
 MAX_TOOL_HOPS = int(os.environ.get("JARVIS_MAX_TOOL_HOPS", "6"))
 
+# Reasoning models emit a hidden train of thought before answering. It buys
+# accuracy on hard questions and costs a great many tokens — which on a CPU-only
+# board is the difference between a pause and an eternity. Off by default on a
+# Pi, on everywhere else. Set JARVIS_THINK to "1" or "0" to decide for yourself.
+_think = os.environ.get("JARVIS_THINK", "").strip()
+THINK = (_think == "1") if _think in ("0", "1") else not hardware.is_raspberry_pi()
+
+# Ceiling on a single reply. Stops a small model looping forever on a slow
+# board; -1 means no limit.
+MAX_TOKENS = int(
+    os.environ.get("JARVIS_MAX_TOKENS", "512" if hardware.is_raspberry_pi() else "-1")
+)
+
 # --- Memory --------------------------------------------------------------
 DB_PATH = DATA_DIR / "jarvis.db"
 # Turns of the current conversation kept in the live context window.

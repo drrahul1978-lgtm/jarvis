@@ -58,6 +58,39 @@ Either way you can still talk to it directly over SSH:
 python3 jarvis.py
 ```
 
+### On a Raspberry Pi 4
+
+A Pi 4 is about three times slower than a Pi 5, so it gets its own installer
+that trades capability for responsiveness:
+
+```bash
+chmod +x deploy/install_pi4.sh
+./deploy/install_pi4.sh
+```
+
+It differs from the general installer in six ways, each of which matters more
+than it sounds:
+
+| Choice | Why |
+| --- | --- |
+| Hidden reasoning **off** | The largest win by far — see below |
+| `qwen3:1.7b`, or `0.6b` under 2.5 GB | Largest that still calls tools at a usable pace |
+| 2048-token context | Attention cost grows with the window |
+| Model pinned in RAM | Re-reading it from an SD card costs more than the RAM |
+| zram instead of swap | No card wear, and far faster than swapping to one |
+| `tiny.en` and the low-quality voice | Medium voices are too slow to synthesise here |
+
+It also checks for throttling and measures the SD card, because heat, power and
+a slow card cause more "this is broken" than the software ever does.
+
+**On hidden reasoning.** Models like `qwen3` generate a long private train of
+thought before answering. Asked `17 × 23`, the same model on the same machine
+took **27.3 seconds** with it on and **0.3 seconds** with it off, and gave the
+same correct answer. On a Pi 4 that difference decides whether the thing gets
+used. The trade is real, though: reasoning genuinely helps on hard, multi-step
+questions, so turn it back on with `JARVIS_THINK=1` if you want accuracy over
+speed.
+
 ### What to expect on a Pi
 
 There is no GPU, so everything runs on the CPU. Roughly:
