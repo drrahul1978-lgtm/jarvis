@@ -69,6 +69,10 @@ class JarvisApp(tk.Tk):
         self._cam_photo = None
         self.cam_full = None
         self._full_photo = None
+        self.announce = tk.BooleanVar(value=False)
+        # When each class was last said aloud, so a person standing still is
+        # announced once rather than every frame.
+        self._announced: dict[str, float] = {}
         self._say_queue: queue.Queue = queue.Queue()
         self._say_buffer = ""
 
@@ -237,6 +241,13 @@ class JarvisApp(tk.Tk):
             self.cam_panel, text="", bg=SURFACE, fg=FAINT, font=("Segoe UI", 8),
             wraplength=CAM_W - 28, justify="left", anchor="w")
         self.cam_note.pack(fill="x", padx=14, pady=(0, 12))
+
+        tk.Checkbutton(
+            self.cam_panel, text="Say what you see", variable=self.announce,
+            command=self.on_announce_toggle, bg=SURFACE, fg=DIM,
+            font=self.f_note, selectcolor=FIELD, activebackground=SURFACE,
+            activeforeground=INK, highlightthickness=0, borderwidth=0,
+            cursor="hand2", anchor="w").pack(fill="x", padx=12, pady=(0, 8))
 
         row = tk.Frame(self.cam_panel, bg=SURFACE)
         row.pack(fill="x", padx=14, pady=(0, 8))
@@ -518,6 +529,8 @@ class JarvisApp(tk.Tk):
         else:
             self.cam_labels.configure(text="nothing recognised", fg=FAINT)
 
+        self._announce_new(names)
+
     def _paint_fullscreen(self, image, names: dict) -> None:
         from PIL import Image, ImageTk
 
@@ -547,10 +560,56 @@ class JarvisApp(tk.Tk):
             text="   ".join(f"{n} {c:.0%}" for n, c in ordered[:limit]),
             fg=vision.colour_hex(ordered[0][0]))
 
+    # How long before the same object is worth mentioning again.
+    ANNOUNCE_COOLDOWN = 25.0
+
+    def on_announce_toggle(self) -> None:
+        if not self.announce.get():
+            return
+        if not self._ensure_voice(need_mic=False):
+            self.announce.set(False)
+            self.write(self.voice_error or "No speech engine available.\n", "bad")
+            return
+        self._announced.clear()
+        self.write("I'll say what I notice.\n", "note")
+
+    def _announce_new(self, names: dict) -> None:
+        """Say aloud anything that has just appeared.
+
+        Only new arrivals, and only once in a while each. Naming everything on
+        every frame would be unusable — a person sitting still would be
+        announced fifteen times a second.
+        """
+        if not self.announce.get() or self.speaker is None or not names:
+            return
+
+        now = time.time()
+        fresh = [
+            name for name in names
+            if now - self._announced.get(name, 0) > self.ANNOUNCE_COOLDOWN
+        ]
+        if not fresh:
+            return
+        for name in fresh:
+            self._announced[name] = now
+
+        # Do not talk over an answer that is already being spoken.
+        if self.thinking or self.streaming:
+            return
+
+        from core import vision
+
+        counts = {name: 1 for name in fresh}
+        self._say_queue.put(f"I can see {vision._phrase(counts)}.")
+
     def _paint_mic(self, active: bool) -> None:
         self._listening = active
         self.b_mic.configure(fg=ACCENT if active else DIM,
                              text="Listening" if active else "Talk")
+        # Mirror it in the fullscreen view, which has its own copy.
+        if self.cam_full is not None and hasattr(self, "full_mic"):
+            self.full_mic.configure(fg=ACCENT if active else INK,
+                                    text="Listening…" if active else "Talk")
 
     def on_mic(self) -> None:
         """Push to talk: one utterance, then send it."""
@@ -599,11 +658,15 @@ class JarvisApp(tk.Tk):
                 return
             self.free_talk = True
             self.b_free.configure(text="Free talk: on", fg=ACCENT)
+            if self.cam_full is not None and hasattr(self, "full_free"):
+                self.full_free.configure(fg=ACCENT)
             self.write("Free talk on — just speak. Click again to stop.\n", "note")
             self._listen_once_free()
         else:
             self.free_talk = False
             self.b_free.configure(text="Free talk: off", fg=DIM)
+            if self.cam_full is not None and hasattr(self, "full_free"):
+                self.full_free.configure(fg=INK)
             self.write("Free talk off.\n", "note")
 
     # --------------------------------------------------------------- camera
@@ -729,10 +792,35 @@ class JarvisApp(tk.Tk):
         self.full_view.pack(fill="both", expand=True)
         self.full_view.bind("<Button-1>", lambda e: self._close_fullscreen())
 
+        # The composer is hidden behind the fullscreen window, so voice needs
+        # its own way in here or it becomes unreachable.
+        controls = tk.Frame(top, bg="#000000")
+        controls.pack(side="bottom", pady=(0, 14))
+
+        self.full_mic = tk.Label(controls, text="Talk", bg="#1e1e1e", fg=INK,
+                                 font=("Segoe UI", 11), padx=22, pady=9,
+                                 cursor="hand2")
+        self.full_mic.pack(side="left", padx=6)
+        self.full_mic.bind("<Button-1>", lambda e: self.on_mic())
+
+        full_free = tk.Label(controls, text="Free talk", bg="#1e1e1e", fg=INK,
+                             font=("Segoe UI", 11), padx=22, pady=9,
+                             cursor="hand2")
+        full_free.pack(side="left", padx=6)
+        full_free.bind("<Button-1>", lambda e: self.on_free_toggle())
+        self.full_free = full_free
+
+        ask = tk.Label(controls, text="What is that?", bg="#1e1e1e", fg=INK,
+                       font=("Segoe UI", 11), padx=22, pady=9, cursor="hand2")
+        ask.pack(side="left", padx=6)
+        ask.bind("<Button-1>", lambda e: self.on_identify())
+
         tk.Label(top, text="Escape to close", bg="#000000", fg=FAINT,
-                 font=("Segoe UI", 9), pady=8).pack(side="bottom")
+                 font=("Segoe UI", 9), pady=6).pack(side="bottom")
 
         self.cam_full = top
+        self._paint_mic(self._listening)
+        self.full_free.configure(fg=ACCENT if self.free_talk else INK)
 
     def _close_fullscreen(self) -> None:
         if self.cam_full is not None:

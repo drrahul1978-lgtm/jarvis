@@ -442,6 +442,14 @@ class list and stepped around the colour wheel by the golden angle — so person
 is always the same red, chair always the same blue, and no two common classes
 land on the same hue.
 
+**Say what you see** makes it speak up as things appear — "I can see a person."
+Only new arrivals, and only once every 25 seconds each: naming everything on
+every frame would announce someone sitting still fifteen times a second. It also
+stays quiet while an answer is being spoken, rather than talking over itself.
+
+Full screen carries its own **Talk**, **Free talk** and **What is that?**
+controls, since the composer is hidden behind it.
+
 The video and the detector run at **different rates on purpose**. On a slow
 board the detector cannot keep up with the camera, and tying them together
 stutters the picture rather than lagging the boxes — the worse of the two. So
